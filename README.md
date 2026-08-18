@@ -12,8 +12,13 @@ Proyecto en construcción. La especificación funcional y el roadmap viven en el
 
 - `backend/`: Spring Boot 2.7.18, Java 8, WAR desplegable.
 - `frontend/`: Angular 22, panel administrativo y Web Component.
-- `infra/`: PostgreSQL + pgvector y configuración de desarrollo.
-- `docs/`: ADR, contratos y documentación técnica versionada con el código.
+- `infra/`: PostgreSQL 15 + pgvector y configuración de desarrollo.
+- `docs/`: ADR, migraciones versionadas y despliegue en WebLogic 12.2.1.4.
+
+Documentos técnicos principales:
+
+- [`docs/database-migrations.md`](docs/database-migrations.md)
+- [`docs/weblogic-12.2.1.4.md`](docs/weblogic-12.2.1.4.md)
 
 ## Principios
 
@@ -29,7 +34,7 @@ Proyecto en construcción. La especificación funcional y el roadmap viven en el
 - Maven 3.9.11 mediante Maven Wrapper
 - Node.js 24.15.0
 - npm 11.12.1
-- Docker Compose para PostgreSQL + pgvector
+- Docker Compose para PostgreSQL 15 + pgvector
 
 ## Verificación local
 
