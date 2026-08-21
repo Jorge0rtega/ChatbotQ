@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,6 +29,9 @@ class ObservabilityIntegrationTest {
 
     @Autowired
     private Environment environment;
+
+    @MockBean
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void exposesBaseMetricsWithCorrelationId() throws Exception {

@@ -2,6 +2,8 @@ package com.chatbotq;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(
     classes = ChatbotQApplication.class,
@@ -10,6 +12,9 @@ import org.springframework.boot.test.context.SpringBootTest;
     }
 )
 class ChatbotQApplicationTest {
+
+    @MockBean
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void contextLoads() {

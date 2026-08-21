@@ -35,6 +35,21 @@ public final class AdminUser {
         return new AdminUser(id, email, passwordHash, generalAdmin, now);
     }
 
+    public static AdminUser restore(UUID id, String email, String passwordHash,
+                                    boolean generalAdmin, AdminUserStatus status,
+                                    int failedLoginCount, Instant lockedUntil,
+                                    Instant createdAt, Instant updatedAt) {
+        if (failedLoginCount < 0) {
+            throw new IllegalArgumentException("failedLoginCount must not be negative");
+        }
+        AdminUser user = new AdminUser(id, email, passwordHash, generalAdmin, createdAt);
+        user.status = require(status, "status");
+        user.failedLoginCount = failedLoginCount;
+        user.lockedUntil = lockedUntil;
+        user.updatedAt = require(updatedAt, "updatedAt");
+        return user;
+    }
+
     public void activate(Instant changedAt) {
         this.status = AdminUserStatus.ACTIVE;
         this.updatedAt = require(changedAt, "changedAt");
@@ -72,6 +87,10 @@ public final class AdminUser {
 
     public int getFailedLoginCount() {
         return failedLoginCount;
+    }
+
+    public Instant getLockedUntil() {
+        return lockedUntil;
     }
 
     public Instant getCreatedAt() {
