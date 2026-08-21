@@ -37,7 +37,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(5, result.migrationsExecuted);
+        assertEquals(6, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -54,9 +54,10 @@ class DatabaseMigrationTest {
                     + "and table_name in ('admin_user', 'project', 'project_allowed_origin', "
                     + "'user_project_role', 'knowledge_entry', 'conversation', "
                     + "'conversation_message', 'retrieval_trace', 'retrieval_candidate', "
-                    + "'handoff_request', 'knowledge_import_job', 'provider_usage')")) {
+                    + "'handoff_request', 'knowledge_import_job', 'provider_usage', "
+                    + "'admin_refresh_session')")) {
                 assertTrue(tables.next());
-                assertEquals(12, tables.getInt(1));
+                assertEquals(13, tables.getInt(1));
             }
         }
     }

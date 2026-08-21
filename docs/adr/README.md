@@ -5,6 +5,7 @@ Las decisiones funcionales viven en Obsidian. Este directorio guarda exclusivame
 ## Índice
 
 - [ADR-001 — Monolito modular por paquetes con Clean Architecture](001-modular-clean-architecture.md)
+- [ADR-002 — Tokens administrativos en almacenamiento del navegador](002-browser-token-storage.md)
 
 ## Pendientes inmediatos
 
