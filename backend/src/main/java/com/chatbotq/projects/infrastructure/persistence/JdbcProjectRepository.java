@@ -1,12 +1,13 @@
 package com.chatbotq.projects.infrastructure.persistence;
 
 import com.chatbotq.projects.application.port.ProjectRepository;
+import com.chatbotq.projects.application.port.ProjectStatusPort;
 import com.chatbotq.projects.domain.Project;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Timestamp;
 
-public final class JdbcProjectRepository implements ProjectRepository {
+public final class JdbcProjectRepository implements ProjectRepository, ProjectStatusPort {
     private final JdbcTemplate jdbc;
 
     public JdbcProjectRepository(JdbcTemplate jdbc) {
@@ -34,5 +35,16 @@ public final class JdbcProjectRepository implements ProjectRepository {
             project.isHandoffEnabled(), project.getHandoffAfterQuestions(),
             Timestamp.from(project.getCreatedAt()), Timestamp.from(project.getUpdatedAt()));
         return project;
+    }
+
+    @Override
+    public boolean existsActiveProject(java.util.UUID projectId) {
+        if (projectId == null) {
+            throw new IllegalArgumentException("projectId must not be null");
+        }
+        Integer count = jdbc.queryForObject(
+            "select count(*) from project where id = ? and status = 'ACTIVE'",
+            Integer.class, projectId);
+        return count != null && count > 0;
     }
 }

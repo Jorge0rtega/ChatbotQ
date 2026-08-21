@@ -5,7 +5,9 @@ import com.chatbotq.identityaccess.application.usecase.AssignProjectAdminUseCase
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
 import com.chatbotq.identityaccess.domain.AdminUser;
 import com.chatbotq.identityaccess.domain.UserProjectAssignment;
+import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
+import com.chatbotq.projects.domain.AllowedOrigin;
 import com.chatbotq.projects.domain.Project;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +52,9 @@ class IdentityProjectInfrastructureConfigurationTest {
     private CreateAdminUserUseCase createAdminUser;
 
     @Autowired
+    private AddAllowedOriginUseCase addAllowedOrigin;
+
+    @Autowired
     private AssignProjectAdminUseCase assignProjectAdmin;
 
     @Autowired
@@ -58,6 +63,8 @@ class IdentityProjectInfrastructureConfigurationTest {
     @Test
     void wiresUseCasesToRealPostgresAdapters() {
         Project project = createProject.execute("Proyecto integrado");
+        AllowedOrigin origin = addAllowedOrigin.execute(
+            project.getId(), "HTTPS://Example.COM:443");
         AdminUser user = createAdminUser.execute(
             "integrado@example.com", "temporal-segura", false);
         UserProjectAssignment assignment = assignProjectAdmin.execute(
@@ -66,6 +73,9 @@ class IdentityProjectInfrastructureConfigurationTest {
         assertTrue(user.getPasswordHash().startsWith("$2"));
         assertEquals(1, jdbc.queryForObject(
             "select count(*) from project where id = ?", Integer.class, project.getId()));
+        assertEquals("https://example.com", jdbc.queryForObject(
+            "select origin from project_allowed_origin where id = ?",
+            String.class, origin.getId()));
         assertEquals(1, jdbc.queryForObject(
             "select count(*) from admin_user where id = ?", Integer.class, user.getId()));
         assertEquals(1, jdbc.queryForObject(

@@ -16,12 +16,15 @@ class UuidIdentityGeneratorsTest {
 
         UUID projectId = projects.newProjectId();
         UUID siteKey = projects.newSiteKey();
+        UUID allowedOriginId = projects.newAllowedOriginId();
         UUID userId = users.newUserId();
 
         assertNotNull(projectId);
         assertNotNull(siteKey);
+        assertNotNull(allowedOriginId);
         assertNotNull(userId);
         assertNotEquals(projectId, siteKey);
+        assertNotEquals(projectId, allowedOriginId);
         assertNotEquals(projectId, userId);
     }
 }

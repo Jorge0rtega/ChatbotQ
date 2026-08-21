@@ -13,9 +13,14 @@ import com.chatbotq.identityaccess.infrastructure.persistence.JdbcUserProjectAss
 import com.chatbotq.identityaccess.infrastructure.security.BCryptPasswordHasher;
 import com.chatbotq.infrastructure.identity.UuidAdminUserIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
+import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
+import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
 import com.chatbotq.projects.application.port.ProjectRepository;
+import com.chatbotq.projects.application.port.ProjectStatusPort;
+import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
+import com.chatbotq.projects.infrastructure.persistence.JdbcAllowedOriginRepository;
 import com.chatbotq.projects.infrastructure.persistence.JdbcProjectRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -33,8 +38,13 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
-    ProjectRepository projectRepository(JdbcTemplate jdbc) {
+    JdbcProjectRepository projectRepository(JdbcTemplate jdbc) {
         return new JdbcProjectRepository(jdbc);
+    }
+
+    @Bean
+    AllowedOriginRepository allowedOriginRepository(JdbcTemplate jdbc) {
+        return new JdbcAllowedOriginRepository(jdbc);
     }
 
     @Bean
@@ -53,7 +63,7 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
-    ProjectIdentityGenerator projectIdentityGenerator() {
+    UuidProjectIdentityGenerator projectIdentityGenerator() {
         return new UuidProjectIdentityGenerator();
     }
 
@@ -73,6 +83,14 @@ public class IdentityProjectInfrastructureConfiguration {
                                                ProjectIdentityGenerator identities,
                                                Clock clock) {
         return new CreateProjectUseCase(projects, identities, clock);
+    }
+
+    @Bean
+    AddAllowedOriginUseCase addAllowedOriginUseCase(ProjectStatusPort projects,
+                                                     AllowedOriginRepository origins,
+                                                     AllowedOriginIdentityGenerator identities,
+                                                     Clock clock) {
+        return new AddAllowedOriginUseCase(projects, origins, identities, clock);
     }
 
     @Bean
