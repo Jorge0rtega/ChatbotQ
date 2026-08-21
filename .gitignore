@@ -25,3 +25,5 @@ logs/
 
 # Tooling caches
 .tooling/
+__pycache__/
+*.pyc

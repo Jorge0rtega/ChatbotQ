@@ -1,0 +1,417 @@
+{
+  "dataset": "v1",
+  "model": "text-embedding-3-small",
+  "generated_at": "2026-08-21T03:48:17.063210+00:00",
+  "evaluated_questions": 14,
+  "skipped_follow_up": 4,
+  "initial": {
+    "threshold": 0.7,
+    "gate_true_positive": 4,
+    "gate_true_negative": 8,
+    "gate_false_positive": 0,
+    "gate_false_negative": 2,
+    "retrieval_hit": 4,
+    "retrieval_miss": 2,
+    "precision": 1.0,
+    "recall": 0.666667,
+    "gate_recall": 0.666667,
+    "retrieval_recall": 0.666667,
+    "f1": 0.8,
+    "accuracy": 0.857143
+  },
+  "selected": {
+    "threshold": 0.577548,
+    "gate_true_positive": 6,
+    "gate_true_negative": 7,
+    "gate_false_positive": 1,
+    "gate_false_negative": 0,
+    "retrieval_hit": 6,
+    "retrieval_miss": 0,
+    "precision": 0.857143,
+    "recall": 1.0,
+    "gate_recall": 1.0,
+    "retrieval_recall": 1.0,
+    "f1": 0.923077,
+    "accuracy": 0.928571
+  },
+  "questions": [
+    {
+      "id": "q001",
+      "type": "answerable",
+      "expected": "kb001",
+      "candidates": [
+        {
+          "id": "kb001",
+          "score": 1.0,
+          "rank": 1
+        },
+        {
+          "id": "kb003",
+          "score": 0.367768,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.344507,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.312063,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q002",
+      "type": "answerable",
+      "expected": "kb001",
+      "candidates": [
+        {
+          "id": "kb001",
+          "score": 0.577548,
+          "rank": 1
+        },
+        {
+          "id": "kb004",
+          "score": 0.296006,
+          "rank": 2
+        },
+        {
+          "id": "kb003",
+          "score": 0.261481,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.166706,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q003",
+      "type": "answerable",
+      "expected": "kb002",
+      "candidates": [
+        {
+          "id": "kb002",
+          "score": 1.0,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.312063,
+          "rank": 2
+        },
+        {
+          "id": "kb003",
+          "score": 0.301275,
+          "rank": 3
+        },
+        {
+          "id": "kb004",
+          "score": 0.269312,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q004",
+      "type": "answerable",
+      "expected": "kb002",
+      "candidates": [
+        {
+          "id": "kb002",
+          "score": 0.68056,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.298743,
+          "rank": 2
+        },
+        {
+          "id": "kb003",
+          "score": 0.259531,
+          "rank": 3
+        },
+        {
+          "id": "kb004",
+          "score": 0.239905,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q005",
+      "type": "answerable",
+      "expected": "kb003",
+      "candidates": [
+        {
+          "id": "kb003",
+          "score": 1.0,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.367678,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.321342,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.301232,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q006",
+      "type": "answerable",
+      "expected": "kb004",
+      "candidates": [
+        {
+          "id": "kb004",
+          "score": 0.709565,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.321996,
+          "rank": 2
+        },
+        {
+          "id": "kb003",
+          "score": 0.277937,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.23217,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q007",
+      "type": "unanswerable",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb001",
+          "score": 0.209908,
+          "rank": 1
+        },
+        {
+          "id": "kb004",
+          "score": 0.182844,
+          "rank": 2
+        },
+        {
+          "id": "kb003",
+          "score": 0.177073,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.166304,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q008",
+      "type": "unanswerable",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb001",
+          "score": 0.341516,
+          "rank": 1
+        },
+        {
+          "id": "kb003",
+          "score": 0.197823,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.19369,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.189525,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q009",
+      "type": "unanswerable",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb002",
+          "score": 0.229997,
+          "rank": 1
+        },
+        {
+          "id": "kb004",
+          "score": 0.227346,
+          "rank": 2
+        },
+        {
+          "id": "kb001",
+          "score": 0.161355,
+          "rank": 3
+        },
+        {
+          "id": "kb003",
+          "score": 0.140392,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q010",
+      "type": "unanswerable",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb002",
+          "score": 0.399535,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.24774,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.201404,
+          "rank": 3
+        },
+        {
+          "id": "kb003",
+          "score": 0.179359,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q011",
+      "type": "ambiguous",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb003",
+          "score": 0.635319,
+          "rank": 1
+        },
+        {
+          "id": "kb001",
+          "score": 0.40602,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.307821,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.299695,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q012",
+      "type": "ambiguous",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb004",
+          "score": 0.387899,
+          "rank": 1
+        },
+        {
+          "id": "kb002",
+          "score": 0.38732,
+          "rank": 2
+        },
+        {
+          "id": "kb001",
+          "score": 0.383092,
+          "rank": 3
+        },
+        {
+          "id": "kb003",
+          "score": 0.303159,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q013",
+      "type": "ambiguous",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb001",
+          "score": 0.369695,
+          "rank": 1
+        },
+        {
+          "id": "kb003",
+          "score": 0.258937,
+          "rank": 2
+        },
+        {
+          "id": "kb004",
+          "score": 0.224633,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.163848,
+          "rank": 4
+        }
+      ]
+    },
+    {
+      "id": "q014",
+      "type": "ambiguous",
+      "expected": "",
+      "candidates": [
+        {
+          "id": "kb004",
+          "score": 0.348124,
+          "rank": 1
+        },
+        {
+          "id": "kb003",
+          "score": 0.345434,
+          "rank": 2
+        },
+        {
+          "id": "kb001",
+          "score": 0.301337,
+          "rank": 3
+        },
+        {
+          "id": "kb002",
+          "score": 0.261793,
+          "rank": 4
+        }
+      ]
+    }
+  ]
+}

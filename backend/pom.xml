@@ -25,6 +25,7 @@
         <maven.compiler.target>1.8</maven.compiler.target>
         <flyway.version>9.22.3</flyway.version>
         <testcontainers.version>1.19.8</testcontainers.version>
+        <archunit.version>1.0.1</archunit.version>
     </properties>
 
     <dependencies>
@@ -69,6 +70,12 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
             <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

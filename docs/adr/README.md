@@ -1,9 +1,12 @@
 # Architecture Decision Records
 
-Las decisiones funcionales viven en Obsidian. Este directorio guardará exclusivamente ADR técnicos que deban viajar junto al código y afectar su construcción o despliegue.
+Las decisiones funcionales viven en Obsidian. Este directorio guarda exclusivamente ADR técnicos que viajan junto al código y afectan su construcción o despliegue.
+
+## Índice
+
+- [ADR-001 — Monolito modular por paquetes con Clean Architecture](001-modular-clean-architecture.md)
 
 ## Pendientes inmediatos
 
 - Compatibilidad exacta con la versión objetivo de WebLogic.
-- Selección de herramienta de migraciones.
-- Contratos HTTP de OpenAI, Grok y handoff.
+- Datasource JNDI o conexión JDBC directa en producción.

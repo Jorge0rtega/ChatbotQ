@@ -16,10 +16,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       show-details: never
+
+logging:
+  pattern:
+    console: 'timestamp=%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX} level=%-5level correlation_id=%X{correlationId:-none} logger=%logger{36} message=%msg%n'
 
 server:
   error:

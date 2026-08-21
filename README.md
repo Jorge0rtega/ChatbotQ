@@ -18,7 +18,11 @@ Proyecto en construcción. La especificación funcional y el roadmap viven en el
 Documentos técnicos principales:
 
 - [`docs/database-migrations.md`](docs/database-migrations.md)
+- [`docs/adr/001-modular-clean-architecture.md`](docs/adr/001-modular-clean-architecture.md): módulos por capacidad y dependencias verificadas con ArchUnit.
 - [`docs/weblogic-12.2.1.4.md`](docs/weblogic-12.2.1.4.md)
+- [`docs/handoff-webhook-v1.md`](docs/handoff-webhook-v1.md): contrato firmado, idempotencia, reintentos y política SSRF.
+- [`docs/provider-cost-estimate.md`](docs/provider-cost-estimate.md): escenarios de coste, presupuestos y entrega operativa de base de datos.
+- [`evaluation/README.md`](evaluation/README.md): dataset y calibración reproducible del umbral RAG.
 
 ## Principios
 
