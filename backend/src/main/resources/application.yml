@@ -29,3 +29,14 @@ server:
   error:
     include-message: never
     include-stacktrace: never
+
+# JWT signing material is mandatory and must be supplied externally with at least 32 bytes of entropy.
+# Access is limited to 5 minutes; rotating refresh families expire after 7 days (max accepted: 30 days).
+chatbotq:
+  security:
+    bcrypt-strength: ${CHATBOTQ_BCRYPT_STRENGTH:12}
+    jwt:
+      secret: ${CHATBOTQ_JWT_SECRET}
+      issuer: ${CHATBOTQ_JWT_ISSUER:chatbotq-local}
+      access-ttl-seconds: ${CHATBOTQ_ACCESS_TTL_SECONDS:300}
+      refresh-ttl-seconds: ${CHATBOTQ_REFRESH_TTL_SECONDS:604800}

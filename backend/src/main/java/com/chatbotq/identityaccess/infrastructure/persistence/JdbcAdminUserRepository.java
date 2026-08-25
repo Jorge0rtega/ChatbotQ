@@ -40,8 +40,13 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
         if (id == null) {
             throw new IllegalArgumentException("id must not be null");
         }
-        List<AdminUser> users = jdbc.query(SELECT_COLUMNS + "where id = ?",
-            new Object[]{id}, (result, rowNumber) -> AdminUser.restore(
+        List<AdminUser> users = queryUsers("where id = ?", id);
+        return users.isEmpty() ? Optional.empty() : Optional.of(users.get(0));
+    }
+
+    private List<AdminUser> queryUsers(String where, Object value) {
+        return jdbc.query(SELECT_COLUMNS + where,
+            new Object[]{value}, (result, rowNumber) -> AdminUser.restore(
                 result.getObject("id", UUID.class),
                 result.getString("email"),
                 result.getString("password_hash"),
@@ -51,6 +56,14 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
                 toInstant(result.getTimestamp("locked_until")),
                 result.getTimestamp("created_at").toInstant(),
                 result.getTimestamp("updated_at").toInstant()));
+    }
+
+    @Override
+    public Optional<AdminUser> findByEmail(String normalizedEmail) {
+        if (normalizedEmail == null || normalizedEmail.trim().isEmpty()) {
+            return Optional.empty();
+        }
+        List<AdminUser> users = queryUsers("where lower(email) = lower(?)", normalizedEmail.trim());
         return users.isEmpty() ? Optional.empty() : Optional.of(users.get(0));
     }
 

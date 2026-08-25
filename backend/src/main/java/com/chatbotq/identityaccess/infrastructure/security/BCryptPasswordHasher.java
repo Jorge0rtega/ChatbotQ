@@ -3,7 +3,7 @@ package com.chatbotq.identityaccess.infrastructure.security;
 import com.chatbotq.identityaccess.application.port.PasswordHasher;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
-public final class BCryptPasswordHasher implements PasswordHasher {
+public final class BCryptPasswordHasher implements PasswordHasher, com.chatbotq.identityaccess.application.port.PasswordVerifier {
     private final BCryptPasswordEncoder encoder;
 
     public BCryptPasswordHasher(int strength) {
@@ -21,6 +21,7 @@ public final class BCryptPasswordHasher implements PasswordHasher {
         return encoder.encode(rawPassword);
     }
 
+    @Override
     public boolean matches(String rawPassword, String encodedPassword) {
         if (rawPassword == null || encodedPassword == null) {
             return false;

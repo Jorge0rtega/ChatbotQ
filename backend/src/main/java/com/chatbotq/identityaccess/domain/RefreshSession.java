@@ -33,6 +33,16 @@ public final class RefreshSession {
         return new RefreshSession(id, userId, familyId, tokenHash, issuedAt, expiresAt);
     }
 
+    public static RefreshSession restore(UUID id, UUID userId, UUID familyId,
+                                         String tokenHash, Instant issuedAt, Instant expiresAt,
+                                         Instant rotatedAt, Instant revokedAt, UUID replacedById) {
+        RefreshSession session = new RefreshSession(id, userId, familyId, tokenHash, issuedAt, expiresAt);
+        session.rotatedAt = rotatedAt;
+        session.revokedAt = revokedAt;
+        session.replacedById = replacedById;
+        return session;
+    }
+
     public boolean isUsableAt(Instant instant) {
         require(instant, "instant");
         return rotatedAt == null && revokedAt == null && instant.isBefore(expiresAt);

@@ -10,5 +10,9 @@ public interface AdminUserRepository {
 
     Optional<AdminUser> findById(UUID id);
 
+    default Optional<AdminUser> findByEmail(String normalizedEmail) {
+        return Optional.empty();
+    }
+
     AdminUser save(AdminUser user);
 }

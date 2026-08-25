@@ -26,7 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Testcontainers
 @SpringBootTest(
     classes = ChatbotQApplication.class,
-    properties = "chatbotq.security.bcrypt-strength=4"
+    properties = {
+        "chatbotq.security.bcrypt-strength=4",
+        "chatbotq.security.jwt.secret=test-fixture-signing-material-with-thirty-two-bytes"
+    }
 )
 class IdentityProjectInfrastructureConfigurationTest {
     private static final DockerImageName IMAGE = DockerImageName.parse("pgvector/pgvector:pg15")

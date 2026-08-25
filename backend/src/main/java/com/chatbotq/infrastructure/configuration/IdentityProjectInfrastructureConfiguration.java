@@ -73,7 +73,7 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
-    PasswordHasher passwordHasher(
+    BCryptPasswordHasher passwordHasher(
         @Value("${chatbotq.security.bcrypt-strength:12}") int strength) {
         return new BCryptPasswordHasher(strength);
     }
