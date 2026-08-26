@@ -3,12 +3,15 @@ package com.chatbotq.infrastructure.configuration;
 import com.chatbotq.identityaccess.application.port.AdminUserIdentityGenerator;
 import com.chatbotq.identityaccess.application.port.AdminUserRepository;
 import com.chatbotq.identityaccess.application.port.PasswordHasher;
+import com.chatbotq.identityaccess.application.port.ProjectAdministrationDecisionPort;
 import com.chatbotq.identityaccess.application.port.ProjectAccessPort;
 import com.chatbotq.identityaccess.application.port.UserProjectAssignmentRepository;
 import com.chatbotq.identityaccess.application.usecase.AssignProjectAdminUseCase;
+import com.chatbotq.identityaccess.application.usecase.CanAdministerProjectUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcAdminUserRepository;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAccessPort;
+import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAdministrationDecisionAdapter;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcUserProjectAssignmentRepository;
 import com.chatbotq.identityaccess.infrastructure.security.BCryptPasswordHasher;
 import com.chatbotq.infrastructure.identity.UuidAdminUserIdentityGenerator;
@@ -63,6 +66,11 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
+    ProjectAdministrationDecisionPort projectAdministrationDecisionPort(JdbcTemplate jdbc) {
+        return new JdbcProjectAdministrationDecisionAdapter(jdbc);
+    }
+
+    @Bean
     UuidProjectIdentityGenerator projectIdentityGenerator() {
         return new UuidProjectIdentityGenerator();
     }
@@ -107,5 +115,11 @@ public class IdentityProjectInfrastructureConfiguration {
                                                          UserProjectAssignmentRepository assignments,
                                                          Clock clock) {
         return new AssignProjectAdminUseCase(users, projects, assignments, clock);
+    }
+
+    @Bean
+    CanAdministerProjectUseCase canAdministerProjectUseCase(
+        ProjectAdministrationDecisionPort decision) {
+        return new CanAdministerProjectUseCase(decision);
     }
 }
