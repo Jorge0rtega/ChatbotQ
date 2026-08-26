@@ -19,11 +19,14 @@ import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
+import com.chatbotq.projects.application.port.ProjectAdministrationPort;
 import com.chatbotq.projects.application.port.ProjectRepository;
 import com.chatbotq.projects.application.port.ProjectStatusPort;
 import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
+import com.chatbotq.projects.application.usecase.AdministerProjectsUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
 import com.chatbotq.projects.infrastructure.persistence.JdbcAllowedOriginRepository;
+import com.chatbotq.projects.infrastructure.persistence.JdbcProjectAdministrationAdapter;
 import com.chatbotq.projects.infrastructure.persistence.JdbcProjectRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -43,6 +46,11 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     JdbcProjectRepository projectRepository(JdbcTemplate jdbc) {
         return new JdbcProjectRepository(jdbc);
+    }
+
+    @Bean
+    JdbcProjectAdministrationAdapter projectAdministrationAdapter(JdbcTemplate jdbc) {
+        return new JdbcProjectAdministrationAdapter(jdbc);
     }
 
     @Bean
@@ -91,6 +99,13 @@ public class IdentityProjectInfrastructureConfiguration {
                                                ProjectIdentityGenerator identities,
                                                Clock clock) {
         return new CreateProjectUseCase(projects, identities, clock);
+    }
+
+    @Bean
+    AdministerProjectsUseCase administerProjectsUseCase(ProjectAdministrationPort projects,
+                                                         ProjectIdentityGenerator identities,
+                                                         Clock clock) {
+        return new AdministerProjectsUseCase(projects, identities, clock);
     }
 
     @Bean

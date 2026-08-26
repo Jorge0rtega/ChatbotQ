@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Collections;
 import java.util.Map;
 
-@RestControllerAdvice
+@RestControllerAdvice(assignableTypes = AdminAuthController.class)
 public class AdminAuthExceptionHandler {
     @ExceptionHandler(InvalidAuthenticationException.class)
     ResponseEntity<Map<String, String>> invalidAuthentication(InvalidAuthenticationException failure) {
