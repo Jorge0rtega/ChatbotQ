@@ -1,5 +1,6 @@
 package com.chatbotq.identityaccess.web;
 
+import com.chatbotq.identityaccess.application.port.AdminUserRepository;
 import com.chatbotq.identityaccess.infrastructure.security.JwtAccessTokenService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,8 +15,9 @@ import java.time.Clock;
 @Configuration(proxyBeanMethods = false)
 public class AdminSecurityConfiguration {
     @Bean
-    JwtAdminAuthenticationFilter jwtAdminAuthenticationFilter(JwtAccessTokenService tokens, Clock clock) {
-        return new JwtAdminAuthenticationFilter(tokens, clock);
+    JwtAdminAuthenticationFilter jwtAdminAuthenticationFilter(JwtAccessTokenService tokens,
+            AdminUserRepository users, Clock clock) {
+        return new JwtAdminAuthenticationFilter(tokens, users, clock);
     }
 
     @Bean

@@ -1,10 +1,12 @@
 package com.chatbotq.identityaccess.web;
 
 import com.chatbotq.identityaccess.application.model.AuthenticationTokens;
+import com.chatbotq.identityaccess.application.model.CurrentAdminView;
 import com.chatbotq.identityaccess.application.usecase.CompleteAdminPasswordResetUseCase;
 import com.chatbotq.identityaccess.application.usecase.LoginAdminUseCase;
 import com.chatbotq.identityaccess.application.usecase.LogoutAdminUseCase;
 import com.chatbotq.identityaccess.application.usecase.RefreshAdminSessionUseCase;
+import com.chatbotq.identityaccess.application.usecase.GetCurrentAdminViewUseCase;
 import com.chatbotq.identityaccess.infrastructure.security.AdminAccessPrincipal;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/admin/auth")
@@ -22,13 +26,16 @@ public class AdminAuthController {
     private final RefreshAdminSessionUseCase refresh;
     private final LogoutAdminUseCase logout;
     private final CompleteAdminPasswordResetUseCase completePasswordReset;
+    private final GetCurrentAdminViewUseCase currentAdmin;
 
     public AdminAuthController(LoginAdminUseCase login, RefreshAdminSessionUseCase refresh,
-                               LogoutAdminUseCase logout, CompleteAdminPasswordResetUseCase completePasswordReset) {
+                               LogoutAdminUseCase logout, CompleteAdminPasswordResetUseCase completePasswordReset,
+                               GetCurrentAdminViewUseCase currentAdmin) {
         this.login = login;
         this.refresh = refresh;
         this.logout = logout;
         this.completePasswordReset = completePasswordReset;
+        this.currentAdmin = currentAdmin;
     }
 
     @PostMapping("/login")
@@ -61,8 +68,10 @@ public class AdminAuthController {
     }
 
     @GetMapping("/me")
-    public MeResponse me(@AuthenticationPrincipal AdminAccessPrincipal principal) {
-        return new MeResponse(principal.getUserId().toString(), principal.getEmail(), principal.isGeneralAdmin());
+    public ResponseEntity<MeResponse> me(@AuthenticationPrincipal AdminAccessPrincipal principal) {
+        CurrentAdminView view = currentAdmin.execute(principal.getUserId());
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new MeResponse(
+            view.getUserId().toString(), view.getEmail(), view.isGeneralAdmin(), view.getProjectIds()));
     }
 
     private ResponseEntity<TokenResponse> tokenResponse(AuthenticationTokens tokens) {
@@ -113,11 +122,13 @@ public class AdminAuthController {
         private final String userId;
         private final String email;
         private final boolean generalAdmin;
-        MeResponse(String userId, String email, boolean generalAdmin) {
-            this.userId = userId; this.email = email; this.generalAdmin = generalAdmin;
+        private final List<UUID> projectIds;
+        MeResponse(String userId, String email, boolean generalAdmin, List<UUID> projectIds) {
+            this.userId = userId; this.email = email; this.generalAdmin = generalAdmin; this.projectIds = projectIds;
         }
         public String getUserId() { return userId; }
         public String getEmail() { return email; }
         public boolean isGeneralAdmin() { return generalAdmin; }
+        public List<UUID> getProjectIds() { return projectIds; }
     }
 }

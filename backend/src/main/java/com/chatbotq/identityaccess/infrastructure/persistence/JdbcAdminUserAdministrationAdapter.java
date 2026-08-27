@@ -26,10 +26,14 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
     private static final String ACTOR = "select exists (select 1 from admin_user a where a.id=? "
         + "and a.is_general_admin and a.status='ACTIVE' and "
         + "(a.locked_until is null or a.locked_until<=current_timestamp)) authorized";
-    private static final String GUARDED_ACTOR = "guard as materialized (select g.id from admin_user g "
-        + "where g.is_general_admin and g.status='ACTIVE' order by g.id for update), actor as materialized "
-        + "(select exists (select 1 from guard g join admin_user a on a.id=g.id where a.id=? "
-        + "and (a.locked_until is null or a.locked_until<=current_timestamp)) authorized)";
+    private static final String LOCKED_ACTOR = "locked_users as materialized (select g.id,g.is_general_admin,g.status,g.locked_until "
+        + "from admin_user g where g.id=? order by g.id for update), actor as materialized "
+        + "(select exists (select 1 from locked_users a where a.id=? and a.is_general_admin "
+        + "and a.status='ACTIVE' and (a.locked_until is null or a.locked_until<=current_timestamp)) authorized)";
+    private static final String LOCKED_ACTOR_TARGET = "locked_users as materialized (select g.id,g.is_general_admin,g.status,g.locked_until "
+        + "from admin_user g where g.id in (?,?) order by g.id for update), actor as materialized "
+        + "(select exists (select 1 from locked_users a where a.id=? and a.is_general_admin "
+        + "and a.status='ACTIVE' and (a.locked_until is null or a.locked_until<=current_timestamp)) authorized)";
     private static final RowMapper<ManagedAdminUser> MAPPER = new RowMapper<ManagedAdminUser>() {
         @Override public ManagedAdminUser mapRow(ResultSet rs, int rowNum) throws SQLException {
             return new ManagedAdminUser((UUID) rs.getObject("id"), rs.getString("email"),
@@ -56,13 +60,13 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
     public ManagedAdminUser createAsGeneralAdmin(UUID actorId, UUID userId, String email,
                                                   String passwordHash, boolean generalAdmin, Instant now) {
         List<UserOutcome> outcomes = jdbc.query(
-            "with " + GUARDED_ACTOR + ", inserted as ("
+            "with " + LOCKED_ACTOR + ", inserted as ("
                 + "insert into admin_user(id,email,password_hash,status,is_general_admin,failed_login_count,locked_until,created_at,updated_at) "
                 + "select ?,?,?,'PASSWORD_RESET_REQUIRED',?,0,null,?,? from actor a where a.authorized "
                 + "on conflict do nothing returning *) select a.authorized,"
                 + "exists(select 1 from admin_user x where lower(x.email)=lower(?) and a.authorized) target_exists,"
                 + COLUMNS + " from actor a left join inserted u on true",
-            outcomeMapper(), actorId, userId, email, passwordHash, generalAdmin,
+            outcomeMapper(), actorId, actorId, userId, email, passwordHash, generalAdmin,
             Timestamp.from(now), Timestamp.from(now), email);
         UserOutcome outcome = outcomes.get(0);
         if (!outcome.authorized) throw new ForbiddenAdminUserAdministrationException();
@@ -107,13 +111,13 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
     public ManagedAdminUser updateEmailAsGeneralAdmin(UUID actorId, UUID userId, String email, Instant now) {
         try {
             List<UserOutcome> outcomes = jdbc.query(
-                "with " + GUARDED_ACTOR + ", target as materialized "
+                "with " + LOCKED_ACTOR_TARGET + ", target as materialized "
                     + "(select id from admin_user where id=?), updated as (update admin_user u set email=?,updated_at=? "
                     + "from actor a where u.id=? and a.authorized and u.email<>? returning " + COLUMNS + "), unchanged as ("
                     + "select " + COLUMNS + " from admin_user u cross join actor a where u.id=? and a.authorized and u.email=?) "
                     + "select a.authorized,exists(select 1 from target) target_exists," + COLUMNS
                     + " from actor a left join (select * from updated union all select * from unchanged) u on true",
-                outcomeMapper(), actorId, userId, email, Timestamp.from(now), userId, email, userId, email);
+                outcomeMapper(), actorId, userId, actorId, userId, email, Timestamp.from(now), userId, email, userId, email);
             return requireUser(outcomes.get(0));
         } catch (DuplicateKeyException duplicate) {
             throw new AdminUserConflictException("admin user email already exists");
@@ -126,31 +130,39 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
         String desired = active ? "ACTIVE" : "DISABLED";
         String current = active ? "DISABLED" : "ACTIVE";
         List<WriteOutcome> outcomes = jdbc.query(
-            "with " + GUARDED_ACTOR + ", target as materialized "
-                + "(select id,is_general_admin,status from admin_user where id=? for update), decision as materialized ("
-                + "select a.authorized,exists(select 1 from target) target_exists,"
+            "with locked_users as materialized (select g.id,g.is_general_admin,g.status,g.locked_until "
+                + "from admin_user g where g.id in (?,?) or (?=false and g.is_general_admin and g.status='ACTIVE') "
+                + "order by g.id for update), actor as materialized (select exists(select 1 from locked_users a "
+                + "where a.id=? and a.is_general_admin and a.status='ACTIVE' "
+                + "and (a.locked_until is null or a.locked_until<=current_timestamp)) authorized), "
+                + "target as materialized (select id,is_general_admin,status from locked_users where id=?), "
+                + "decision as materialized (select a.authorized,exists(select 1 from target) target_exists,"
                 + "(?=false and ?=(select id from target)) self_block,"
-                + "(?=true and (select status from target)='PASSWORD_RESET_REQUIRED') invalid_transition from actor a), updated as ("
-                + "update admin_user u set status=?,updated_at=? from decision d where u.id=? and d.authorized "
-                + "and not d.self_block and not d.invalid_transition and u.status=? returning u.id) "
-                + "select authorized,target_exists,self_block,invalid_transition from decision",
+                + "(?=false and coalesce((select is_general_admin and status='ACTIVE' from target),false) "
+                + "and (select count(*) from locked_users where is_general_admin and status='ACTIVE')<=1) last_general_block,"
+                + "(?=true and (select status from target)='PASSWORD_RESET_REQUIRED') invalid_transition from actor a), "
+                + "updated as (update admin_user u set status=?,updated_at=? from decision d where u.id=? and d.authorized "
+                + "and not d.self_block and not d.last_general_block and not d.invalid_transition and u.status=? returning u.id) "
+                + "select authorized,target_exists,self_block,last_general_block,invalid_transition from decision",
             (rs, row) -> new WriteOutcome(rs.getBoolean("authorized"), rs.getBoolean("target_exists"),
-                rs.getBoolean("self_block"), rs.getBoolean("invalid_transition")), actorId, userId, active, actorId,
-            active, desired, Timestamp.from(now), userId, current);
+                rs.getBoolean("self_block"), rs.getBoolean("last_general_block"), rs.getBoolean("invalid_transition")),
+            actorId, userId, active, actorId, userId, active, actorId, active, active,
+            desired, Timestamp.from(now), userId, current);
         classify(outcomes.get(0));
     }
 
     @Override
     public void resetPasswordAsGeneralAdmin(final UUID actorId, final UUID userId,
                                             final String passwordHash, final Instant now) {
-        List<UUID> authorizedActors = jdbc.query(
-            "select id from admin_user where is_general_admin and status='ACTIVE' "
-                + "and (locked_until is null or locked_until<=current_timestamp) order by id for update",
-            (rs, row) -> rs.getObject("id", UUID.class));
-        if (!authorizedActors.contains(actorId)) throw new ForbiddenAdminUserAdministrationException();
-        List<UUID> targets = jdbc.query("select id from admin_user where id=? for update",
-            new Object[]{userId}, (rs, row) -> rs.getObject("id", UUID.class));
-        if (targets.isEmpty()) throw new AdminUserNotFoundException();
+        List<LockedAdmin> locked = jdbc.query(
+            "select id,is_general_admin,(status='ACTIVE' and (locked_until is null or locked_until<=current_timestamp)) available "
+                + "from admin_user where id in (?,?) order by id for update",
+            (rs, row) -> new LockedAdmin((UUID) rs.getObject("id"), rs.getBoolean("is_general_admin"),
+                rs.getBoolean("available")), actorId, userId);
+        LockedAdmin actor = findLocked(locked, actorId);
+        LockedAdmin target = findLocked(locked, userId);
+        if (actor == null || !actor.isAvailableGeneral()) throw new ForbiddenAdminUserAdministrationException();
+        if (target == null) throw new AdminUserNotFoundException();
         if (actorId.equals(userId)) {
             throw new AdminUserConflictException("general admin cannot block own access");
         }
@@ -178,8 +190,15 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
     private static void classify(WriteOutcome outcome) {
         if (!outcome.authorized) throw new ForbiddenAdminUserAdministrationException();
         if (!outcome.targetExists) throw new AdminUserNotFoundException();
-        if (outcome.selfBlock) throw new AdminUserConflictException("general admin cannot block own access");
+        if (outcome.selfBlock || outcome.lastGeneralBlock) {
+            throw new AdminUserConflictException("general admin cannot block own or last general access");
+        }
         if (outcome.invalidTransition) throw new AdminUserConflictException("password reset must be completed before activation");
+    }
+
+    private static LockedAdmin findLocked(List<LockedAdmin> users, UUID id) {
+        for (LockedAdmin user : users) if (user.id.equals(id)) return user;
+        return null;
     }
 
     private static final class UserOutcome {
@@ -194,13 +213,21 @@ public class JdbcAdminUserAdministrationAdapter implements AdminUserAdministrati
         final boolean authorized;
         final boolean targetExists;
         final boolean selfBlock;
+        final boolean lastGeneralBlock;
         final boolean invalidTransition;
-        WriteOutcome(boolean authorized, boolean targetExists, boolean selfBlock) {
-            this(authorized, targetExists, selfBlock, false);
-        }
-        WriteOutcome(boolean authorized, boolean targetExists, boolean selfBlock, boolean invalidTransition) {
+        WriteOutcome(boolean authorized, boolean targetExists, boolean selfBlock,
+                     boolean lastGeneralBlock, boolean invalidTransition) {
             this.authorized = authorized; this.targetExists = targetExists; this.selfBlock = selfBlock;
-            this.invalidTransition = invalidTransition;
+            this.lastGeneralBlock = lastGeneralBlock; this.invalidTransition = invalidTransition;
         }
+    }
+    private static final class LockedAdmin {
+        final UUID id;
+        final boolean general;
+        final boolean available;
+        LockedAdmin(UUID id, boolean general, boolean available) {
+            this.id = id; this.general = general; this.available = available;
+        }
+        boolean isAvailableGeneral() { return general && available; }
     }
 }

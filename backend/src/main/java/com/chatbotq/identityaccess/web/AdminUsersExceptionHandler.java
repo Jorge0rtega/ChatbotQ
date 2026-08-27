@@ -3,6 +3,7 @@ package com.chatbotq.identityaccess.web;
 import com.chatbotq.identityaccess.application.usecase.AdminUserConflictException;
 import com.chatbotq.identityaccess.application.usecase.AdminUserNotFoundException;
 import com.chatbotq.identityaccess.application.usecase.ForbiddenAdminUserAdministrationException;
+import com.chatbotq.identityaccess.application.usecase.AssignedProjectNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -20,6 +21,9 @@ public class AdminUsersExceptionHandler {
 
     @ExceptionHandler(AdminUserNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound() { return error(HttpStatus.NOT_FOUND, "admin_user_not_found"); }
+
+    @ExceptionHandler(AssignedProjectNotFoundException.class)
+    ResponseEntity<Map<String, String>> projectNotFound() { return error(HttpStatus.NOT_FOUND, "project_not_found"); }
 
     @ExceptionHandler(AdminUserConflictException.class)
     ResponseEntity<Map<String, String>> conflict() { return error(HttpStatus.CONFLICT, "admin_user_conflict"); }

@@ -1,6 +1,7 @@
 package com.chatbotq.identityaccess.web;
 
 import com.chatbotq.identityaccess.application.usecase.InvalidAuthenticationException;
+import com.chatbotq.identityaccess.application.usecase.ForbiddenAdminUserAdministrationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -12,6 +13,9 @@ import java.util.Map;
 
 @RestControllerAdvice(assignableTypes = AdminAuthController.class)
 public class AdminAuthExceptionHandler {
+    @ExceptionHandler(ForbiddenAdminUserAdministrationException.class)
+    ResponseEntity<Map<String, String>> forbidden() { return error(HttpStatus.FORBIDDEN, "forbidden"); }
+
     @ExceptionHandler(InvalidAuthenticationException.class)
     ResponseEntity<Map<String, String>> invalidAuthentication(InvalidAuthenticationException failure) {
         String code = "invalid credentials".equals(failure.getMessage())

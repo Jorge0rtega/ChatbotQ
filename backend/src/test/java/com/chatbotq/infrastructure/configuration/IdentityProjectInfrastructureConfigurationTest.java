@@ -1,10 +1,10 @@
 package com.chatbotq.infrastructure.configuration;
 
 import com.chatbotq.ChatbotQApplication;
-import com.chatbotq.identityaccess.application.usecase.AssignProjectAdminUseCase;
+import com.chatbotq.identityaccess.application.usecase.AdministerUserProjectAssignmentsUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
 import com.chatbotq.identityaccess.domain.AdminUser;
-import com.chatbotq.identityaccess.domain.UserProjectAssignment;
+
 import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
 import com.chatbotq.projects.domain.AllowedOrigin;
@@ -58,7 +58,7 @@ class IdentityProjectInfrastructureConfigurationTest {
     private AddAllowedOriginUseCase addAllowedOrigin;
 
     @Autowired
-    private AssignProjectAdminUseCase assignProjectAdmin;
+    private AdministerUserProjectAssignmentsUseCase assignments;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -70,8 +70,11 @@ class IdentityProjectInfrastructureConfigurationTest {
             project.getId(), "HTTPS://Example.COM:443");
         AdminUser user = createAdminUser.execute(
             "integrado@example.com", "temporal-segura", false);
-        UserProjectAssignment assignment = assignProjectAdmin.execute(
-            user.getId(), project.getId());
+        AdminUser general = createAdminUser.execute(
+            "general-integrado@example.com", "temporal-segura", true);
+        jdbc.update("update admin_user set status='ACTIVE' where id=?", general.getId());
+        assignments.replace(general.getId(), user.getId(),
+            java.util.Collections.singletonList(project.getId()));
 
         assertTrue(user.getPasswordHash().startsWith("$2"));
         assertEquals(1, jdbc.queryForObject(
@@ -83,6 +86,6 @@ class IdentityProjectInfrastructureConfigurationTest {
             "select count(*) from admin_user where id = ?", Integer.class, user.getId()));
         assertEquals(1, jdbc.queryForObject(
             "select count(*) from user_project_role where user_id = ? and project_id = ?",
-            Integer.class, assignment.getUserId(), assignment.getProjectId()));
+            Integer.class, user.getId(), project.getId()));
     }
 }

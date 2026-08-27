@@ -21,10 +21,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.matchesPattern;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -65,6 +68,7 @@ class AdminUsersHttpIntegrationTest {
         jdbc.update("delete from admin_refresh_session");
         jdbc.update("delete from user_project_role");
         jdbc.update("delete from admin_user");
+        jdbc.update("delete from project");
         general = active("general-users@example.com", true);
         projectAdmin = active("project-users@example.com", false);
     }
@@ -176,6 +180,151 @@ class AdminUsersHttpIntegrationTest {
             .andExpect(status().isMethodNotAllowed());
         org.junit.jupiter.api.Assertions.assertEquals(1, jdbc.queryForObject(
             "select count(*) from admin_user where id=?", Integer.class, projectAdmin.getId()));
+    }
+
+    @Test
+    void managesProjectAssignmentsAtomicallyAndExistingJwtMeReflectsCurrentActiveProjects() throws Exception {
+        UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID second = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
+        jdbc.update("insert into project(id,name,status) values (?,?,?)", first, "First", "ACTIVE");
+        jdbc.update("insert into project(id,name,status) values (?,?,?)", second, "Second", "DISABLED");
+        String generalToken = login("general-users@example.com");
+        String projectToken = login("project-users@example.com");
+
+        mvc.perform(put("/api/admin/users/" + projectAdmin.getId() + "/projects")
+                .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"projectIds\":[\"" + second + "\",\"" + first + "\"]}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds[0]", is(first.toString())))
+            .andExpect(jsonPath("$.projectIds[1]", is(second.toString())))
+            .andExpect(jsonPath("$.projectIds", hasSize(2)));
+        mvc.perform(get("/api/admin/users/" + projectAdmin.getId() + "/projects")
+                .header("Authorization", bearer(generalToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds[0]", is(first.toString())));
+
+        mvc.perform(get("/api/admin/auth/me").header("Authorization", bearer(projectToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(1)))
+            .andExpect(jsonPath("$.projectIds[0]", is(first.toString())));
+        jdbc.update("update admin_user set email='current-role@example.com',is_general_admin=true where id=?",
+            projectAdmin.getId());
+        mvc.perform(get("/api/admin/auth/me").header("Authorization", bearer(projectToken)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.email", is("current-role@example.com")))
+            .andExpect(jsonPath("$.generalAdmin", is(true)))
+            .andExpect(jsonPath("$.projectIds", hasSize(0)));
+        jdbc.update("update admin_user set is_general_admin=false where id=?", projectAdmin.getId());
+        jdbc.update("update project set status='DISABLED' where id=?", first);
+        mvc.perform(get("/api/admin/auth/me").header("Authorization", bearer(projectToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(0)));
+        jdbc.update("update project set status='ACTIVE' where id=?", first);
+        mvc.perform(put("/api/admin/users/" + projectAdmin.getId() + "/projects")
+                .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"projectIds\":[]}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(0)));
+        mvc.perform(get("/api/admin/auth/me").header("Authorization", bearer(projectToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(0)));
+        mvc.perform(get("/api/admin/auth/me").header("Authorization", bearer(generalToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(0)));
+    }
+
+    @Test
+    void assignmentContractIsClosedCanonicalAndDoesNotEnumerateForUnauthorizedActor() throws Exception {
+        UUID project = UUID.randomUUID();
+        jdbc.update("insert into project(id,name,status) values (?,?,?)", project, "Project", "ACTIVE");
+        String generalToken = login("general-users@example.com");
+        String projectToken = login("project-users@example.com");
+        String path = "/api/admin/users/" + projectAdmin.getId() + "/projects";
+
+        mvc.perform(get(path).header("Authorization", bearer(projectToken))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/users/" + UUID.randomUUID() + "/projects")
+            .header("Authorization", bearer(projectToken))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/users/" + general.getId() + "/projects")
+            .header("Authorization", bearer(generalToken))).andExpect(status().isConflict());
+        String upperTarget = projectAdmin.getId().toString().toUpperCase(java.util.Locale.ROOT);
+        mvc.perform(get("/api/admin/users/" + upperTarget + "/projects")
+            .header("Authorization", bearer(generalToken))).andExpect(status().isBadRequest());
+        mvc.perform(put("/api/admin/users/" + upperTarget + "/projects")
+            .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[]}" )).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/admin/users/1-1-1-1-1/projects")
+            .header("Authorization", bearer(generalToken))).andExpect(status().isBadRequest());
+        mvc.perform(put("/api/admin/users/ " + projectAdmin.getId() + "/projects")
+            .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[]}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project+"\"],\"extra\":true}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project+"\"],\"projectIds\":[]}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project+"\",\""+project+"\"]}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[null]}" )).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project.toString().toUpperCase(java.util.Locale.ROOT)+"\"]}" ))
+            .andExpect(status().isBadRequest());
+
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project+"\"]}" )).andExpect(status().isOk());
+        mvc.perform(put(path).header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"projectIds\":[\""+project+"\",\""+UUID.randomUUID()+"\"]}" ))
+            .andExpect(status().isNotFound());
+        assertEquals(1, jdbc.queryForObject("select count(*) from user_project_role where user_id=? and project_id=?",
+            Integer.class, projectAdmin.getId(), project));
+
+        jdbc.update("update admin_user set status='DISABLED' where id=?", general.getId());
+        mvc.perform(get(path).header("Authorization", bearer(generalToken))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/users/" + UUID.randomUUID() + "/projects")
+            .header("Authorization", bearer(generalToken))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void putAssignmentsClassifiesActorAndTargetsAndAcceptsEveryManagedProjectAdminStatus() throws Exception {
+        UUID project = UUID.randomUUID();
+        jdbc.update("insert into project(id,name,status) values (?,?,?)", project, "Matrix", "ACTIVE");
+        String generalToken = login("general-users@example.com");
+        String projectToken = login("project-users@example.com");
+        String body = "{\"projectIds\":[\"" + project + "\"]}";
+
+        mvc.perform(put("/api/admin/users/" + UUID.randomUUID() + "/projects")
+            .header("Authorization", bearer(projectToken)).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/users/" + UUID.randomUUID() + "/projects")
+            .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isNotFound());
+        mvc.perform(put("/api/admin/users/" + general.getId() + "/projects")
+            .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isConflict());
+
+        for (String managedStatus : new String[]{"ACTIVE", "DISABLED", "PASSWORD_RESET_REQUIRED"}) {
+            jdbc.update("update admin_user set status=? where id=?", managedStatus, projectAdmin.getId());
+            mvc.perform(put("/api/admin/users/" + projectAdmin.getId() + "/projects")
+                .header("Authorization", bearer(generalToken)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.projectIds[0]", is(project.toString())));
+        }
+    }
+
+    @Test
+    void putAssignmentsAcceptsExactlyOneThousandAndRejectsOneThousandOne() throws Exception {
+        String token = login("general-users@example.com");
+        List<UUID> ids = new ArrayList<>();
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 1000; i++) {
+            UUID id = UUID.randomUUID(); ids.add(id);
+            rows.add(new Object[]{id, "Boundary-" + i, "ACTIVE"});
+        }
+        jdbc.batchUpdate("insert into project(id,name,status) values (?,?,?)", rows);
+        String path = "/api/admin/users/" + projectAdmin.getId() + "/projects";
+        String thousand = json.writeValueAsString(java.util.Collections.singletonMap("projectIds", ids));
+        mvc.perform(put(path).header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+            .content(thousand)).andExpect(status().isOk()).andExpect(jsonPath("$.projectIds", hasSize(1000)));
+
+        ids.add(UUID.randomUUID());
+        mvc.perform(put(path).header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(java.util.Collections.singletonMap("projectIds", ids))))
+            .andExpect(status().isBadRequest());
+        assertEquals(1000, jdbc.queryForObject(
+            "select count(*) from user_project_role where user_id=?", Integer.class, projectAdmin.getId()));
     }
 
     private AdminUser active(String email, boolean generalAdmin) {

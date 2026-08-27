@@ -3,6 +3,7 @@ package com.chatbotq.identityaccess.web;
 import com.chatbotq.identityaccess.application.model.ManagedAdminUser;
 import com.chatbotq.identityaccess.application.model.ManagedAdminUserPage;
 import com.chatbotq.identityaccess.application.usecase.AdministerAdminUsersUseCase;
+import com.chatbotq.identityaccess.application.usecase.AdministerUserProjectAssignmentsUseCase;
 import com.chatbotq.identityaccess.infrastructure.security.AdminAccessPrincipal;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -28,8 +29,39 @@ import java.util.UUID;
 @RequestMapping("/api/admin/users")
 public class AdminUsersController {
     private final AdministerAdminUsersUseCase users;
+    private final AdministerUserProjectAssignmentsUseCase assignments;
 
-    public AdminUsersController(AdministerAdminUsersUseCase users) { this.users = users; }
+    public AdminUsersController(AdministerAdminUsersUseCase users,
+                                AdministerUserProjectAssignmentsUseCase assignments) {
+        this.users = users; this.assignments = assignments;
+    }
+
+    @GetMapping("/{userId}/projects")
+    ProjectIdsResponse projects(Authentication authentication, @PathVariable String userId) {
+        return new ProjectIdsResponse(assignments.list(actor(authentication), canonicalUuid(userId)));
+    }
+
+    @PutMapping("/{userId}/projects")
+    ProjectIdsResponse replaceProjects(Authentication authentication, @PathVariable String userId,
+                                       @RequestBody ProjectIdsRequest request) {
+        UUID targetId = canonicalUuid(userId);
+        if (request == null || !request.seen || request.projectIds == null) {
+            throw new IllegalArgumentException("projectIds is required");
+        }
+        if (request.projectIds.size() > AdministerUserProjectAssignmentsUseCase.MAX_PROJECT_IDS) {
+            throw new IllegalArgumentException("too many projectIds");
+        }
+        List<UUID> ids = new ArrayList<>();
+        for (String value : request.projectIds) {
+            if (value == null) throw new IllegalArgumentException("null projectId");
+            UUID parsed;
+            try { parsed = UUID.fromString(value); }
+            catch (RuntimeException invalid) { throw new IllegalArgumentException("invalid projectId", invalid); }
+            if (!parsed.toString().equals(value)) throw new IllegalArgumentException("projectId must be canonical");
+            ids.add(parsed);
+        }
+        return new ProjectIdsResponse(assignments.replace(actor(authentication), targetId, ids));
+    }
 
     @PostMapping
     ResponseEntity<UserResponse> create(Authentication authentication, @RequestBody CreateRequest request) {
@@ -86,6 +118,17 @@ public class AdminUsersController {
         return ((AdminAccessPrincipal) authentication.getPrincipal()).getUserId();
     }
 
+    private static UUID canonicalUuid(String value) {
+        try {
+            if (!UUID.fromString(value).toString().equals(value)) {
+                throw new IllegalArgumentException("userId must be canonical");
+            }
+            return UUID.fromString(value);
+        } catch (RuntimeException invalid) {
+            throw new IllegalArgumentException("userId must be canonical", invalid);
+        }
+    }
+
     static final class CreateRequest {
         String email;
         String temporaryPassword;
@@ -127,6 +170,23 @@ public class AdminUsersController {
         @JsonAnySetter public void rejectUnknown(String property, Object ignored) {
             throw new IllegalArgumentException("unknown property: " + property);
         }
+    }
+
+    static final class ProjectIdsRequest {
+        List<String> projectIds;
+        boolean seen;
+        @JsonProperty("projectIds") public void setProjectIds(List<String> value) {
+            if (seen) throw new IllegalArgumentException("duplicate property"); seen = true; projectIds = value;
+        }
+        @JsonAnySetter public void rejectUnknown(String property, Object ignored) {
+            throw new IllegalArgumentException("unknown property: " + property);
+        }
+    }
+
+    static final class ProjectIdsResponse {
+        private final List<UUID> projectIds;
+        ProjectIdsResponse(List<UUID> projectIds) { this.projectIds = projectIds; }
+        public List<UUID> getProjectIds() { return projectIds; }
     }
 
     static final class UserResponse {

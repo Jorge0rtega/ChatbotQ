@@ -4,17 +4,21 @@ import com.chatbotq.identityaccess.application.port.AdminUserAdministrationPort;
 import com.chatbotq.identityaccess.application.port.AdminUserIdentityGenerator;
 import com.chatbotq.identityaccess.application.port.AdminUserRepository;
 import com.chatbotq.identityaccess.application.port.ApplicationTransaction;
+import com.chatbotq.identityaccess.application.port.CurrentAdminViewPort;
 import com.chatbotq.identityaccess.application.port.PasswordHasher;
 import com.chatbotq.identityaccess.application.port.ProjectAdministrationDecisionPort;
 import com.chatbotq.identityaccess.application.port.ProjectAccessPort;
 import com.chatbotq.identityaccess.application.port.RefreshSessionRepository;
 import com.chatbotq.identityaccess.application.port.UserProjectAssignmentRepository;
 import com.chatbotq.identityaccess.application.usecase.AdministerAdminUsersUseCase;
-import com.chatbotq.identityaccess.application.usecase.AssignProjectAdminUseCase;
+import com.chatbotq.identityaccess.application.usecase.AdministerUserProjectAssignmentsUseCase;
+
 import com.chatbotq.identityaccess.application.usecase.CanAdministerProjectUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
+import com.chatbotq.identityaccess.application.usecase.GetCurrentAdminViewUseCase;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcAdminUserAdministrationAdapter;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcAdminUserRepository;
+import com.chatbotq.identityaccess.infrastructure.persistence.JdbcCurrentAdminViewAdapter;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAccessPort;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAdministrationDecisionAdapter;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcUserProjectAssignmentRepository;
@@ -84,6 +88,11 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
+    CurrentAdminViewPort currentAdminViewPort(JdbcTemplate jdbc) {
+        return new JdbcCurrentAdminViewAdapter(jdbc);
+    }
+
+    @Bean
     ProjectAdministrationDecisionPort projectAdministrationDecisionPort(JdbcTemplate jdbc) {
         return new JdbcProjectAdministrationDecisionAdapter(jdbc);
     }
@@ -138,6 +147,17 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
+    AdministerUserProjectAssignmentsUseCase administerUserProjectAssignmentsUseCase(
+            UserProjectAssignmentRepository assignments, ApplicationTransaction transactions, Clock clock) {
+        return new AdministerUserProjectAssignmentsUseCase(assignments, transactions, clock);
+    }
+
+    @Bean
+    GetCurrentAdminViewUseCase getCurrentAdminViewUseCase(CurrentAdminViewPort views) {
+        return new GetCurrentAdminViewUseCase(views);
+    }
+
+    @Bean
     CreateAdminUserUseCase createAdminUserUseCase(AdminUserRepository users,
                                                    PasswordHasher passwordHasher,
                                                    AdminUserIdentityGenerator identities,
@@ -145,13 +165,6 @@ public class IdentityProjectInfrastructureConfiguration {
         return new CreateAdminUserUseCase(users, passwordHasher, identities, clock);
     }
 
-    @Bean
-    AssignProjectAdminUseCase assignProjectAdminUseCase(AdminUserRepository users,
-                                                         ProjectAccessPort projects,
-                                                         UserProjectAssignmentRepository assignments,
-                                                         Clock clock) {
-        return new AssignProjectAdminUseCase(users, projects, assignments, clock);
-    }
 
     @Bean
     CanAdministerProjectUseCase canAdministerProjectUseCase(
