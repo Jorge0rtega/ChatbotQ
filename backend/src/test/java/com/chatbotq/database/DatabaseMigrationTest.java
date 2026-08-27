@@ -1,8 +1,13 @@
 package com.chatbotq.database;
 
 import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.UUID;
 
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
@@ -37,7 +42,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(6, result.migrationsExecuted);
+        assertEquals(7, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -58,6 +63,49 @@ class DatabaseMigrationTest {
                     + "'admin_refresh_session')")) {
                 assertTrue(tables.next());
                 assertEquals(13, tables.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void upgradesV001ThroughV006DataWithoutChangingSiteKeyAndBackfillsRotationMetadata() throws Exception {
+        String schema = "site_key_upgrade";
+        Flyway before = Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).createSchemas(true).locations("classpath:db/migration").target("006").load();
+        assertEquals(6, before.migrate().migrationsExecuted);
+        UUID projectId = UUID.randomUUID();
+        UUID siteKey = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-08-20T22:00:00Z");
+        String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
+        try (Connection connection = DriverManager.getConnection(schemaUrl,
+                POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement insert = connection.prepareStatement(
+                 "insert into project(id,name,site_key,created_at,updated_at) values (?,?,?,?,?)")) {
+            insert.setObject(1, projectId);
+            insert.setString(2, "Existing");
+            insert.setObject(3, siteKey);
+            insert.setTimestamp(4, Timestamp.from(createdAt));
+            insert.setTimestamp(5, Timestamp.from(createdAt));
+            insert.executeUpdate();
+        }
+
+        Flyway upgraded = Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).locations("classpath:db/migration").load();
+        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        upgraded.validate();
+        try (Connection connection = DriverManager.getConnection(schemaUrl,
+                POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement query = connection.prepareStatement(
+                 "select site_key,site_key_version,site_key_rotated_at,site_key_rotated_by from project where id=?")) {
+            query.setObject(1, projectId);
+            try (ResultSet row = query.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(siteKey, row.getObject("site_key"));
+                assertEquals(1L, row.getLong("site_key_version"));
+                assertEquals(createdAt, row.getTimestamp("site_key_rotated_at").toInstant());
+                assertEquals(null, row.getObject("site_key_rotated_by"));
             }
         }
     }

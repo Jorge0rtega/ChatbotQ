@@ -31,9 +31,11 @@ import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
 import com.chatbotq.projects.application.port.ProjectAdministrationPort;
 import com.chatbotq.projects.application.port.ProjectRepository;
 import com.chatbotq.projects.application.port.ProjectStatusPort;
+import com.chatbotq.projects.application.port.ProjectSiteKeyAdministrationPort;
 import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
 import com.chatbotq.projects.application.usecase.AdministerProjectsUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
+import com.chatbotq.projects.application.usecase.ManageProjectSiteKeyUseCase;
 import com.chatbotq.projects.infrastructure.persistence.JdbcAllowedOriginRepository;
 import com.chatbotq.projects.infrastructure.persistence.JdbcProjectAdministrationAdapter;
 import com.chatbotq.projects.infrastructure.persistence.JdbcProjectRepository;
@@ -125,6 +127,13 @@ public class IdentityProjectInfrastructureConfiguration {
                                                          ProjectIdentityGenerator identities,
                                                          Clock clock) {
         return new AdministerProjectsUseCase(projects, identities, clock);
+    }
+
+    @Bean
+    ManageProjectSiteKeyUseCase manageProjectSiteKeyUseCase(ProjectSiteKeyAdministrationPort siteKeys,
+                                                             ProjectIdentityGenerator identities,
+                                                             Clock clock) {
+        return new ManageProjectSiteKeyUseCase(siteKeys, identities, clock);
     }
 
     @Bean

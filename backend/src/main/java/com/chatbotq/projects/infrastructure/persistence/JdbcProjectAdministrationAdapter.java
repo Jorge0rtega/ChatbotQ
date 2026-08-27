@@ -2,9 +2,14 @@ package com.chatbotq.projects.infrastructure.persistence;
 
 import com.chatbotq.projects.application.model.ManagedProject;
 import com.chatbotq.projects.application.model.ManagedProjectPage;
+import com.chatbotq.projects.application.model.ManagedSiteKey;
 import com.chatbotq.projects.application.port.ProjectAdministrationPort;
+import com.chatbotq.projects.application.port.ProjectSiteKeyAdministrationPort;
 import com.chatbotq.projects.application.usecase.ForbiddenProjectAdministrationException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
+import com.chatbotq.projects.application.usecase.SiteKeyRotationFailedException;
+import com.chatbotq.projects.application.usecase.StaleSiteKeyVersionException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-public class JdbcProjectAdministrationAdapter implements ProjectAdministrationPort {
+public class JdbcProjectAdministrationAdapter implements ProjectAdministrationPort, ProjectSiteKeyAdministrationPort {
     private static final String COLUMNS = "p.id, p.name, p.status, p.created_at, p.updated_at";
     private static final RowMapper<ManagedProject> MAPPER = new RowMapper<ManagedProject>() {
         @Override public ManagedProject mapRow(ResultSet rs, int rowNum) throws SQLException {
@@ -39,12 +44,13 @@ public class JdbcProjectAdministrationAdapter implements ProjectAdministrationPo
     public ManagedProject createAsGeneralAdmin(UUID actorId, UUID projectId, String name,
                                                 UUID siteKey, Instant now) {
         List<ManagedProject> rows = jdbc.query(
-            "insert into project (id,name,status,site_key,created_at,updated_at) "
-                + "select ?,?,'ACTIVE',?,?,? where exists (select 1 from admin_user u "
+            "insert into project (id,name,status,site_key,created_at,updated_at,site_key_rotated_at) "
+                + "select ?,?,'ACTIVE',?,?,?,? where exists (select 1 from admin_user u "
                 + "where u.id=? and u.status='ACTIVE' and (u.locked_until is null "
                 + "or u.locked_until <= current_timestamp) and u.is_general_admin) "
                 + "returning id,name,status,created_at,updated_at",
-            MAPPER, projectId, name, siteKey, Timestamp.from(now), Timestamp.from(now), actorId);
+            MAPPER, projectId, name, siteKey, Timestamp.from(now), Timestamp.from(now),
+            Timestamp.from(now), actorId);
         if (rows.isEmpty()) throw new ForbiddenProjectAdministrationException();
         return rows.get(0);
     }
@@ -132,6 +138,58 @@ public class JdbcProjectAdministrationAdapter implements ProjectAdministrationPo
         if (!outcome.projectExists) throw new ProjectNotFoundException();
     }
 
+    @Override
+    public ManagedSiteKey read(UUID actorId, UUID projectId) {
+        List<SiteKeyOutcome> outcomes = jdbc.query(
+            "with actor as materialized (select u.id,u.is_general_admin from admin_user u where u.id=? "
+                + "and u.status='ACTIVE' and (u.locked_until is null or u.locked_until<=current_timestamp)), "
+                + "target as materialized (select p.id,p.status,p.site_key,p.site_key_version,"
+                + "p.site_key_rotated_at from project p where p.id=?), decision as (select exists "
+                + "(select 1 from actor a where a.is_general_admin or exists (select 1 from target p "
+                + "join user_project_role upr on upr.user_id=a.id and upr.project_id=p.id "
+                + "and upr.role='PROJECT_ADMIN' where p.status='ACTIVE')) authorized, exists "
+                + "(select 1 from target) project_exists) select d.authorized,d.project_exists,"
+                + "p.site_key,p.site_key_version,p.site_key_rotated_at from decision d "
+                + "left join target p on d.authorized",
+            (rs, rowNum) -> new SiteKeyOutcome(rs.getBoolean("authorized"),
+                rs.getBoolean("project_exists"), rs.getObject("site_key") == null ? null
+                    : new ManagedSiteKey((UUID) rs.getObject("site_key"), rs.getLong("site_key_version"),
+                        rs.getTimestamp("site_key_rotated_at").toInstant())), actorId, projectId);
+        SiteKeyOutcome outcome = outcomes.get(0);
+        if (!outcome.authorized) throw new ForbiddenProjectAdministrationException();
+        if (!outcome.projectExists) throw new ProjectNotFoundException();
+        return outcome.siteKey;
+    }
+
+    @Override
+    @Transactional
+    public ManagedSiteKey rotateAsGeneralAdmin(UUID actorId, UUID projectId, long expectedVersion,
+                                               UUID generatedSiteKey, Instant rotatedAt) {
+        List<Boolean> actors = jdbc.query("select u.status='ACTIVE' and u.is_general_admin and "
+                + "(u.locked_until is null or u.locked_until<=current_timestamp) authorized "
+                + "from admin_user u where u.id=? for update",
+            (rs, rowNum) -> rs.getBoolean("authorized"), actorId);
+        if (actors.isEmpty() || !actors.get(0)) throw new ForbiddenProjectAdministrationException();
+
+        List<Long> versions = jdbc.query("select p.site_key_version from project p where p.id=? for update",
+            (rs, rowNum) -> rs.getLong("site_key_version"), projectId);
+        if (versions.isEmpty()) throw new ProjectNotFoundException();
+        long currentVersion = versions.get(0);
+        if (currentVersion != expectedVersion || currentVersion == Long.MAX_VALUE) {
+            throw new StaleSiteKeyVersionException();
+        }
+        try {
+            return jdbc.queryForObject("update project set site_key=?,site_key_version=site_key_version+1,"
+                    + "site_key_rotated_at=?,site_key_rotated_by=?,updated_at=? where id=? returning "
+                    + "site_key,site_key_version,site_key_rotated_at",
+                (rs, rowNum) -> new ManagedSiteKey((UUID) rs.getObject("site_key"),
+                    rs.getLong("site_key_version"), rs.getTimestamp("site_key_rotated_at").toInstant()),
+                generatedSiteKey, Timestamp.from(rotatedAt), actorId, Timestamp.from(rotatedAt), projectId);
+        } catch (DataIntegrityViolationException collisionOrConstraintFailure) {
+            throw new SiteKeyRotationFailedException(collisionOrConstraintFailure);
+        }
+    }
+
     private static final class WriteOutcome {
         private final boolean authorized;
         private final boolean projectExists;
@@ -151,6 +209,18 @@ public class JdbcProjectAdministrationAdapter implements ProjectAdministrationPo
             this.authorized = authorized;
             this.projectExists = projectExists;
             this.project = project;
+        }
+    }
+
+    private static final class SiteKeyOutcome {
+        private final boolean authorized;
+        private final boolean projectExists;
+        private final ManagedSiteKey siteKey;
+
+        private SiteKeyOutcome(boolean authorized, boolean projectExists, ManagedSiteKey siteKey) {
+            this.authorized = authorized;
+            this.projectExists = projectExists;
+            this.siteKey = siteKey;
         }
     }
 }

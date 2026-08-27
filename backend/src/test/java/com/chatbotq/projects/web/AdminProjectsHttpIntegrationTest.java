@@ -30,6 +30,7 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -242,6 +243,94 @@ class AdminProjectsHttpIntegrationTest {
         mvc.perform(put("/api/admin/projects/" + assigned).header("Authorization", bearer(token))
                 .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Denied\"}"))
             .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void siteKeyReadHasClosedNoStoreContractAndUniformProjectAdminAuthorization() throws Exception {
+        String generalToken = login("general-crud@example.com");
+        String projectToken = login("project-crud@example.com");
+        String path = "/api/admin/projects/" + assigned + "/site-key";
+
+        String body = mvc.perform(get(path).header("Authorization", bearer(generalToken)))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(header().string("Pragma", "no-cache"))
+            .andExpect(jsonPath("$.siteKey").isString())
+            .andExpect(jsonPath("$.version", is(1)))
+            .andExpect(jsonPath("$.rotatedAt").isString())
+            .andExpect(jsonPath("$.id").doesNotExist())
+            .andReturn().getResponse().getContentAsString();
+        assertEquals(3, json.readTree(body).size());
+
+        mvc.perform(get(path).header("Authorization", bearer(projectToken))).andExpect(status().isOk());
+        mvc.perform(get("/api/admin/projects/" + other + "/site-key")
+                .header("Authorization", bearer(projectToken))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/projects/" + UUID.randomUUID() + "/site-key")
+                .header("Authorization", bearer(projectToken))).andExpect(status().isForbidden());
+        jdbc.update("update project set status='DISABLED' where id=?", assigned);
+        mvc.perform(get(path).header("Authorization", bearer(generalToken))).andExpect(status().isOk());
+        mvc.perform(get(path).header("Authorization", bearer(projectToken))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void siteKeyRotationIsGeneralOnlyCasAndDoesNotLeakIntoBroadResponses() throws Exception {
+        String generalToken = login("general-crud@example.com");
+        String projectToken = login("project-crud@example.com");
+        String path = "/api/admin/projects/" + assigned + "/site-key/rotate";
+        UUID oldKey = jdbc.queryForObject("select site_key from project where id=?", UUID.class, assigned);
+
+        String body = mvc.perform(post(path).header("Authorization", bearer(generalToken))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"expectedVersion\":1}"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(header().string("Pragma", "no-cache"))
+            .andExpect(jsonPath("$.version", is(2)))
+            .andReturn().getResponse().getContentAsString();
+        JsonNode rotated = json.readTree(body);
+        assertEquals(3, rotated.size());
+        assertNotEquals(oldKey.toString(), rotated.get("siteKey").asText());
+        assertEquals(0, jdbc.queryForObject("select count(*) from project where site_key=?", Integer.class, oldKey));
+
+        mvc.perform(post(path).header("Authorization", bearer(generalToken))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"expectedVersion\":1}"))
+            .andExpect(status().isConflict())
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$.code", is("site_key_version_conflict")));
+        mvc.perform(post(path).header("Authorization", bearer(projectToken))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"expectedVersion\":2}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/projects/" + UUID.randomUUID() + "/site-key/rotate")
+                .header("Authorization", bearer(projectToken)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedVersion\":1}"))
+            .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/admin/projects/" + assigned).header("Authorization", bearer(generalToken)))
+            .andExpect(jsonPath("$.siteKey").doesNotExist()).andExpect(jsonPath("$.version").doesNotExist());
+        mvc.perform(get("/api/admin/projects").header("Authorization", bearer(generalToken)))
+            .andExpect(jsonPath("$.items[*].siteKey").doesNotExist());
+    }
+
+    @Test
+    void siteKeyPathsAndRotateBodyAreCanonicalStrictAndClosed() throws Exception {
+        String token = login("general-crud@example.com");
+        String path = "/api/admin/projects/" + assigned + "/site-key/rotate";
+        String[] invalidBodies = {"", "null", "{}", "{", "{\"expectedVersion\":null}",
+            "{\"expectedVersion\":0}", "{\"expectedVersion\":-1}",
+            "{\"expectedVersion\":1.5}", "{\"expectedVersion\":\"1\"}",
+            "{\"expectedVersion\":9223372036854775808}",
+            "{\"expectedVersion\":1,\"unknown\":true}",
+            "{\"expectedVersion\":1,\"expectedVersion\":1}"};
+        for (String invalidBody : invalidBodies) {
+            mvc.perform(post(path).header("Authorization", bearer(token))
+                    .contentType(MediaType.APPLICATION_JSON).content(invalidBody))
+                .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get("/api/admin/projects/" + assigned.toString().toUpperCase() + "/site-key")
+                .header("Authorization", bearer(token))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/projects/not-a-uuid/site-key/rotate")
+                .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedVersion\":1}"))
+            .andExpect(status().isBadRequest());
     }
 
     @ParameterizedTest(name = "existing JWT: {0} actor cannot {1}")

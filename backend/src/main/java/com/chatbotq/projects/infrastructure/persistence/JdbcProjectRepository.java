@@ -26,14 +26,16 @@ public final class JdbcProjectRepository implements ProjectRepository, ProjectSt
                 + "conversation_inactivity_seconds, retention_days, history_message_limit, "
                 + "history_token_limit, response_token_limit, similarity_threshold, "
                 + "retrieval_top_k, handoff_enabled, handoff_after_questions, "
-                + "created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "created_at, updated_at, site_key_rotated_at) "
+                + "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             project.getId(), project.getName(), project.isActive() ? "ACTIVE" : "DISABLED",
             project.getSiteKey(), project.getConversationInactivitySeconds(),
             project.getRetentionDays(), project.getHistoryMessageLimit(),
             project.getHistoryTokenLimit(), project.getResponseTokenLimit(),
             project.getSimilarityThreshold(), project.getRetrievalTopK(),
             project.isHandoffEnabled(), project.getHandoffAfterQuestions(),
-            Timestamp.from(project.getCreatedAt()), Timestamp.from(project.getUpdatedAt()));
+            Timestamp.from(project.getCreatedAt()), Timestamp.from(project.getUpdatedAt()),
+            Timestamp.from(project.getCreatedAt()));
         return project;
     }
 

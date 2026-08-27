@@ -3,9 +3,13 @@ package com.chatbotq.projects.web;
 import com.chatbotq.identityaccess.infrastructure.security.AdminAccessPrincipal;
 import com.chatbotq.projects.application.model.ManagedProject;
 import com.chatbotq.projects.application.model.ManagedProjectPage;
+import com.chatbotq.projects.application.model.ManagedSiteKey;
 import com.chatbotq.projects.application.usecase.AdministerProjectsUseCase;
+import com.chatbotq.projects.application.usecase.ManageProjectSiteKeyUseCase;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,9 +32,11 @@ import java.util.UUID;
 @RequestMapping("/api/admin/projects")
 public class AdminProjectsController {
     private final AdministerProjectsUseCase projects;
+    private final ManageProjectSiteKeyUseCase siteKeys;
 
-    public AdminProjectsController(AdministerProjectsUseCase projects) {
+    public AdminProjectsController(AdministerProjectsUseCase projects, ManageProjectSiteKeyUseCase siteKeys) {
         this.projects = projects;
+        this.siteKeys = siteKeys;
     }
 
     @PostMapping
@@ -71,6 +77,42 @@ public class AdminProjectsController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/{projectId}/site-key")
+    ResponseEntity<SiteKeyResponse> siteKey(Authentication authentication, @PathVariable String projectId) {
+        return noStore(SiteKeyResponse.from(
+            siteKeys.read(actor(authentication), canonicalProjectId(projectId))));
+    }
+
+    @PostMapping("/{projectId}/site-key/rotate")
+    ResponseEntity<SiteKeyResponse> rotateSiteKey(Authentication authentication,
+                                                  @PathVariable String projectId,
+                                                  @RequestBody RotateSiteKeyRequest request) {
+        if (request == null || !request.expectedVersionSeen) {
+            throw new IllegalArgumentException("expectedVersion is required");
+        }
+        return noStore(SiteKeyResponse.from(siteKeys.rotate(actor(authentication),
+            canonicalProjectId(projectId), request.expectedVersion)));
+    }
+
+    private static <T> ResponseEntity<T> noStore(T body) {
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .header(HttpHeaders.PRAGMA, "no-cache").body(body);
+    }
+
+    private static UUID canonicalProjectId(String raw) {
+        if (raw == null) throw new IllegalArgumentException("projectId is required");
+        final UUID parsed;
+        try {
+            parsed = UUID.fromString(raw);
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalArgumentException("projectId must be a canonical UUID", invalid);
+        }
+        if (!parsed.toString().equals(raw)) {
+            throw new IllegalArgumentException("projectId must be a canonical UUID");
+        }
+        return parsed;
+    }
+
     private UUID actor(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AdminAccessPrincipal)) {
             throw new IllegalArgumentException("authenticated admin principal required");
@@ -93,6 +135,47 @@ public class AdminProjectsController {
         public void rejectUnknown(String property, Object ignored) {
             throw new IllegalArgumentException("unknown project property: " + property);
         }
+    }
+
+    static final class RotateSiteKeyRequest {
+        private long expectedVersion;
+        private boolean expectedVersionSeen;
+
+        @JsonProperty("expectedVersion")
+        public void setExpectedVersion(JsonNode value) {
+            if (expectedVersionSeen) throw new IllegalArgumentException("duplicate expectedVersion");
+            expectedVersionSeen = true;
+            if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
+                throw new IllegalArgumentException("expectedVersion must be an integer");
+            }
+            expectedVersion = value.longValue();
+            if (expectedVersion < 1L) throw new IllegalArgumentException("expectedVersion must be positive");
+        }
+
+        @JsonAnySetter
+        public void rejectUnknown(String property, Object ignored) {
+            throw new IllegalArgumentException("unknown site key rotation property: " + property);
+        }
+    }
+
+    static final class SiteKeyResponse {
+        private final UUID siteKey;
+        private final long version;
+        private final Instant rotatedAt;
+
+        private SiteKeyResponse(UUID siteKey, long version, Instant rotatedAt) {
+            this.siteKey = siteKey;
+            this.version = version;
+            this.rotatedAt = rotatedAt;
+        }
+
+        static SiteKeyResponse from(ManagedSiteKey managed) {
+            return new SiteKeyResponse(managed.getSiteKey(), managed.getVersion(), managed.getRotatedAt());
+        }
+
+        public UUID getSiteKey() { return siteKey; }
+        public long getVersion() { return version; }
+        public Instant getRotatedAt() { return rotatedAt; }
     }
 
     static final class ProjectResponse {
