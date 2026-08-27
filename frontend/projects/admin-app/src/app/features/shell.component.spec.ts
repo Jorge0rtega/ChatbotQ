@@ -7,7 +7,12 @@ import { ShellComponent } from './shell.component';
 
 describe('ShellComponent role navigation', () => {
   let fixture: ComponentFixture<ShellComponent>;
-  const me = signal({ userId: '1', email: 'project@example.com', generalAdmin: false });
+  const me = signal({
+    userId: '1',
+    email: 'project@example.com',
+    generalAdmin: false,
+    projectIds: [] as readonly string[],
+  });
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({

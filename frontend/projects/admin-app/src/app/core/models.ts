@@ -9,24 +9,15 @@ export type ProjectStatus = 'ACTIVE' | 'DISABLED';
 export type AdminRole = 'GENERAL_ADMIN' | 'PROJECT_ADMIN';
 export type AdminUserStatus = 'ACTIVE' | 'DISABLED' | 'PASSWORD_RESET_REQUIRED';
 
-export interface AssignedProjectSummary {
-  id: string;
-  name: string;
-  status: ProjectStatus;
-}
-
 export interface MeResponse {
   userId: string;
   email: string;
   generalAdmin: boolean;
-  /** Future adapter point; absent until the backend /me contract exposes assignments. */
-  projectAssignments?: readonly AssignedProjectSummary[];
+  projectIds: readonly string[];
 }
 
-export function assignedProjectsFromMe(
-  me: MeResponse | null,
-): readonly AssignedProjectSummary[] | null {
-  return me?.projectAssignments ?? null;
+export interface ProjectIdsResponse {
+  projectIds: readonly string[];
 }
 
 export interface PageResponse<T> {

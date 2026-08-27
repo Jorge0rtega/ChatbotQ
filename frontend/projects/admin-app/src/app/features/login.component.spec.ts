@@ -27,7 +27,10 @@ describe('LoginComponent', () => {
 
   function submittedFixture() {
     const fixture = TestBed.createComponent(LoginComponent);
-    fixture.componentInstance.form.setValue({ email: 'admin@example.com', password: 'Secret123456' });
+    fixture.componentInstance.form.setValue({
+      email: 'admin@example.com',
+      password: 'Secret123456',
+    });
     fixture.componentInstance.submit();
     return fixture;
   }
@@ -61,7 +64,12 @@ describe('LoginComponent', () => {
     const fixture = submittedFixture();
     const router = TestBed.inject(Router);
     const navigate = vi.spyOn(router, 'navigateByUrl');
-    loginResult.next({ userId: '1', email: 'admin@example.com', generalAdmin: true });
+    loginResult.next({
+      userId: '1',
+      email: 'admin@example.com',
+      generalAdmin: true,
+      projectIds: [],
+    });
     loginResult.complete();
     expect(fixture.componentInstance.form.controls.password.value).toBe('');
     expect(navigate).toHaveBeenCalledWith('/projects');
@@ -69,7 +77,10 @@ describe('LoginComponent', () => {
 
   it('normalizes email and cancels a pending login while clearing password on destroy', () => {
     const fixture = TestBed.createComponent(LoginComponent);
-    fixture.componentInstance.form.setValue({ email: '  ADMIN@Example.COM ', password: 'Secret123456' });
+    fixture.componentInstance.form.setValue({
+      email: '  ADMIN@Example.COM ',
+      password: 'Secret123456',
+    });
     fixture.componentInstance.submit();
     expect(login).toHaveBeenCalledWith('admin@example.com', 'Secret123456');
     expect(loginResult.observed).toBe(true);
@@ -80,7 +91,10 @@ describe('LoginComponent', () => {
 
   it('accepts a Java-compatible 320-character email', () => {
     const fixture = TestBed.createComponent(LoginComponent);
-    fixture.componentInstance.form.setValue({ email: `${'a'.repeat(318)}@b`, password: 'Secret123456' });
+    fixture.componentInstance.form.setValue({
+      email: `${'a'.repeat(318)}@b`,
+      password: 'Secret123456',
+    });
     fixture.componentInstance.submit();
     expect(login).toHaveBeenCalledOnce();
   });

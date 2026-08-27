@@ -44,11 +44,14 @@ describe('SessionService', () => {
   it('stores typed access and refresh tokens after login and loads /me', async () => {
     const promise = firstValueFrom(session.login('admin@example.com', 'secret'));
     http.expectOne('/api/admin/auth/login').flush(tokens('access', 'refresh'));
-    http.expectOne('/api/admin/auth/me').flush({ userId: 'u1', email: 'admin@example.com', generalAdmin: true });
+    http
+      .expectOne('/api/admin/auth/me')
+      .flush({ userId: 'u1', email: 'admin@example.com', generalAdmin: true, projectIds: [] });
     await promise;
     expect(localStorage.getItem('chatbotq.admin.accessToken')).toBe('access');
     expect(localStorage.getItem('chatbotq.admin.refreshToken')).toBe('refresh');
     expect(session.me()?.generalAdmin).toBe(true);
+    expect(session.me()?.projectIds).toEqual([]);
   });
 
   it('keeps tokens out of Angular signals, the DOM and console output', async () => {
@@ -58,7 +61,9 @@ describe('SessionService', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const promise = firstValueFrom(session.login('admin@example.com', 'password-secret'));
     http.expectOne('/api/admin/auth/login').flush(tokens(access, refresh));
-    http.expectOne('/api/admin/auth/me').flush({ userId: 'u1', email: 'admin@example.com', generalAdmin: true });
+    http
+      .expectOne('/api/admin/auth/me')
+      .flush({ userId: 'u1', email: 'admin@example.com', generalAdmin: true, projectIds: [] });
     await promise;
     const signalValues = Object.values(session as unknown as Record<string, unknown>)
       .filter(isSignal)
@@ -138,14 +143,14 @@ describe('authInterceptor refresh lifecycle', () => {
     session.storeTokens(tokens('old', 'refresh-old'));
     const first = firstValueFrom(session.loadMe());
     const second = firstValueFrom(session.loadMe());
-    http.match('/api/admin/auth/me').forEach((request) =>
-      request.flush({}, { status: 401, statusText: 'Unauthorized' }),
-    );
+    http
+      .match('/api/admin/auth/me')
+      .forEach((request) => request.flush({}, { status: 401, statusText: 'Unauthorized' }));
     http.expectOne('/api/admin/auth/refresh').flush(tokens('new', 'refresh-new'));
     const retried = http.match('/api/admin/auth/me');
     expect(retried).toHaveLength(2);
-    retried[0].flush({ userId: 'u', email: 'one@b.co', generalAdmin: false });
-    retried[1].flush({ userId: 'u', email: 'two@b.co', generalAdmin: false });
+    retried[0].flush({ userId: 'u', email: 'one@b.co', generalAdmin: false, projectIds: ['p1'] });
+    retried[1].flush({ userId: 'u', email: 'two@b.co', generalAdmin: false, projectIds: ['p2'] });
     await Promise.all([first, second]);
   });
 
@@ -160,7 +165,7 @@ describe('authInterceptor refresh lifecycle', () => {
     http.expectOne('/api/admin/auth/login').flush(tokens('new-access', 'new-refresh'));
     const newMe = http.expectOne('/api/admin/auth/me');
     expect(newMe.request.headers.get('Authorization')).toBe('Bearer new-access');
-    newMe.flush({ userId: 'new', email: 'new@example.com', generalAdmin: true });
+    newMe.flush({ userId: 'new', email: 'new@example.com', generalAdmin: true, projectIds: [] });
     await newLogin;
 
     oldRefresh.flush(tokens('stale-access', 'stale-refresh'));
@@ -181,7 +186,9 @@ describe('authInterceptor refresh lifecycle', () => {
     expect((await result).status).toBe(401);
     expect(session.authenticated()).toBe(false);
     expect(router.createUrlTree).toHaveBeenCalledTimes(1);
-    expect(router.createUrlTree.mock.calls[0][1]).toEqual({ queryParams: { returnUrl: '/users?page=2' } });
+    expect(router.createUrlTree.mock.calls[0][1]).toEqual({
+      queryParams: { returnUrl: '/users?page=2' },
+    });
     expect(router.navigateByUrl).toHaveBeenCalledTimes(1);
     http.expectNone('/api/admin/auth/refresh');
   });
@@ -202,28 +209,35 @@ describe('authInterceptor refresh lifecycle', () => {
     session.storeTokens(tokens('old', 'bad'));
     const first = firstValueFrom(session.loadMe()).catch((error) => error);
     const second = firstValueFrom(session.loadMe()).catch((error) => error);
-    http.match('/api/admin/auth/me').forEach((request) =>
-      request.flush({}, { status: 401, statusText: 'Unauthorized' }),
-    );
-    http.expectOne('/api/admin/auth/refresh').flush({}, { status: 401, statusText: 'Unauthorized' });
+    http
+      .match('/api/admin/auth/me')
+      .forEach((request) => request.flush({}, { status: 401, statusText: 'Unauthorized' }));
+    http
+      .expectOne('/api/admin/auth/refresh')
+      .flush({}, { status: 401, statusText: 'Unauthorized' });
     await Promise.all([first, second]);
     expect(router.navigateByUrl).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('authGuard', () => {
-  it.each(['/users', '//evil.example', '/unknown'])('uses only a safe returnUrl for %s', (requested) => {
-    localStorage.clear();
-    TestBed.configureTestingModule({
-      providers: [
-        provideHttpClient(),
-        provideHttpClientTesting(),
-        { provide: Router, useValue: router },
-      ],
-    });
-    const result = TestBed.runInInjectionContext(() =>
-      authGuard({} as never, { url: requested } as never),
-    ) as unknown as { options: { queryParams: { returnUrl: string } } };
-    expect(result.options.queryParams.returnUrl).toBe(requested === '/users' ? '/users' : '/projects');
-  });
+  it.each(['/users', '//evil.example', '/unknown'])(
+    'uses only a safe returnUrl for %s',
+    (requested) => {
+      localStorage.clear();
+      TestBed.configureTestingModule({
+        providers: [
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          { provide: Router, useValue: router },
+        ],
+      });
+      const result = TestBed.runInInjectionContext(() =>
+        authGuard({} as never, { url: requested } as never),
+      ) as unknown as { options: { queryParams: { returnUrl: string } } };
+      expect(result.options.queryParams.returnUrl).toBe(
+        requested === '/users' ? '/users' : '/projects',
+      );
+    },
+  );
 });
