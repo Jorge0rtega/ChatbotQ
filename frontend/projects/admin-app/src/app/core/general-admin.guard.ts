@@ -1,0 +1,2 @@
+import { inject } from '@angular/core'; import { CanActivateFn, Router } from '@angular/router'; import { catchError, map, of } from 'rxjs'; import { SessionService } from './session.service';
+export const generalAdminGuard: CanActivateFn=()=>{const session=inject(SessionService),router=inject(Router);const decide=()=>session.me()?.generalAdmin===true?true:router.createUrlTree(['/projects']);return session.me()?decide():session.loadMe().pipe(map(decide),catchError(()=>of(router.createUrlTree(['/login']))));};
