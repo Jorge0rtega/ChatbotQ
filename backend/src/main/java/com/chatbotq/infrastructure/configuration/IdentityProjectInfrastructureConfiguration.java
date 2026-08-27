@@ -1,14 +1,19 @@
 package com.chatbotq.infrastructure.configuration;
 
+import com.chatbotq.identityaccess.application.port.AdminUserAdministrationPort;
 import com.chatbotq.identityaccess.application.port.AdminUserIdentityGenerator;
 import com.chatbotq.identityaccess.application.port.AdminUserRepository;
+import com.chatbotq.identityaccess.application.port.ApplicationTransaction;
 import com.chatbotq.identityaccess.application.port.PasswordHasher;
 import com.chatbotq.identityaccess.application.port.ProjectAdministrationDecisionPort;
 import com.chatbotq.identityaccess.application.port.ProjectAccessPort;
+import com.chatbotq.identityaccess.application.port.RefreshSessionRepository;
 import com.chatbotq.identityaccess.application.port.UserProjectAssignmentRepository;
+import com.chatbotq.identityaccess.application.usecase.AdministerAdminUsersUseCase;
 import com.chatbotq.identityaccess.application.usecase.AssignProjectAdminUseCase;
 import com.chatbotq.identityaccess.application.usecase.CanAdministerProjectUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
+import com.chatbotq.identityaccess.infrastructure.persistence.JdbcAdminUserAdministrationAdapter;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcAdminUserRepository;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAccessPort;
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAdministrationDecisionAdapter;
@@ -64,6 +69,11 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
+    AdminUserAdministrationPort adminUserAdministrationPort(JdbcTemplate jdbc) {
+        return new JdbcAdminUserAdministrationAdapter(jdbc);
+    }
+
+    @Bean
     ProjectAccessPort projectAccessPort(JdbcTemplate jdbc) {
         return new JdbcProjectAccessPort(jdbc);
     }
@@ -114,6 +124,17 @@ public class IdentityProjectInfrastructureConfiguration {
                                                      AllowedOriginIdentityGenerator identities,
                                                      Clock clock) {
         return new AddAllowedOriginUseCase(projects, origins, identities, clock);
+    }
+
+    @Bean
+    AdministerAdminUsersUseCase administerAdminUsersUseCase(AdminUserAdministrationPort users,
+                                                             PasswordHasher passwordHasher,
+                                                             AdminUserIdentityGenerator identities,
+                                                             RefreshSessionRepository sessions,
+                                                             ApplicationTransaction transactions,
+                                                             Clock clock) {
+        return new AdministerAdminUsersUseCase(
+            users, passwordHasher, identities, sessions, transactions, clock);
     }
 
     @Bean

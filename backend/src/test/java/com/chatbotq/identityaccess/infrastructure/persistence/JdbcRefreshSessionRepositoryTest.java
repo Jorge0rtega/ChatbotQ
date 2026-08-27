@@ -1,11 +1,13 @@
 package com.chatbotq.identityaccess.infrastructure.persistence;
 
 import com.chatbotq.identityaccess.application.port.AccessTokenIssuer;
+import com.chatbotq.identityaccess.application.port.ApplicationTransaction;
 import com.chatbotq.identityaccess.application.port.RefreshTokenManager;
 import com.chatbotq.identityaccess.application.usecase.InvalidAuthenticationException;
 import com.chatbotq.identityaccess.application.usecase.RefreshAdminSessionUseCase;
 import com.chatbotq.identityaccess.domain.AdminUser;
 import com.chatbotq.identityaccess.domain.RefreshSession;
+import com.chatbotq.infrastructure.transaction.SpringApplicationTransaction;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -23,6 +25,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,6 +46,7 @@ class JdbcRefreshSessionRepositoryTest {
     private static DriverManagerDataSource dataSource;
     private JdbcRefreshSessionRepository repository;
     private TransactionTemplate transactions;
+    private ApplicationTransaction applicationTransactions;
     private UUID userId;
 
     @BeforeAll
@@ -65,11 +72,38 @@ class JdbcRefreshSessionRepositoryTest {
         user.activate(now.minusSeconds(30));
         new JdbcAdminUserRepository(jdbc).save(user);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-        repository = new JdbcRefreshSessionRepository(jdbc, transactions);
+        applicationTransactions = new SpringApplicationTransaction(transactions);
+        repository = new JdbcRefreshSessionRepository(jdbc);
     }
 
     @AfterAll
     static void stopDatabase() { if (postgres != null) postgres.stop(); }
+
+    @Test
+    void orderedRevocationsLockEveryAffectedRowBeforeUpdating() {
+        List<String> statements = new ArrayList<>();
+        JdbcTemplate recording = new JdbcTemplate() {
+            @Override public <T> List<T> query(String sql, Object[] args,
+                    org.springframework.jdbc.core.RowMapper<T> mapper) {
+                statements.add(sql); return Collections.emptyList();
+            }
+            @Override public int update(String sql, Object... args) {
+                statements.add(sql); return 0;
+            }
+        };
+        JdbcRefreshSessionRepository ordered = new JdbcRefreshSessionRepository(recording);
+        UUID familyId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-08-25T10:00:00Z");
+
+        ordered.revokeFamilyOrdered(familyId, now);
+        ordered.revokeAllByUserOrdered(userId, now);
+
+        assertEquals(Arrays.asList(
+            "select id from admin_refresh_session where family_id=? order by id for update",
+            "update admin_refresh_session set revoked_at=coalesce(revoked_at, ?) where family_id=?",
+            "select id from admin_refresh_session where user_id=? order by id for update",
+            "update admin_refresh_session set revoked_at=coalesce(revoked_at, ?) where user_id=?"), statements);
+    }
 
     @Test
     void savesAndFindsSessionByHashWithoutRawTokenColumn() {
@@ -96,14 +130,18 @@ class JdbcRefreshSessionRepositoryTest {
             repeat('b', 64), now, now.plusSeconds(3600));
         RefreshSession replacement = RefreshSession.issue(UUID.randomUUID(), userId, familyId,
             repeat('c', 64), now.plusSeconds(10), now.plusSeconds(3610));
+        RefreshSession losingReplacement = RefreshSession.issue(UUID.randomUUID(), userId, familyId,
+            repeat('0', 64), now.plusSeconds(11), now.plusSeconds(3611));
         repository.save(current);
 
-        assertTrue(repository.replaceIfUsable(current, replacement, now.plusSeconds(10)));
-        assertFalse(repository.replaceIfUsable(current, replacement, now.plusSeconds(11)));
+        assertTrue(applicationTransactions.execute(
+            () -> repository.replaceIfUsable(current, replacement, now.plusSeconds(10))));
+        assertFalse(applicationTransactions.execute(
+            () -> repository.replaceIfUsable(current, losingReplacement, now.plusSeconds(11))));
         assertFalse(repository.findByTokenHash(repeat('b', 64)).get().isUsableAt(now.plusSeconds(11)));
         assertTrue(repository.findByTokenHash(repeat('c', 64)).get().isUsableAt(now.plusSeconds(11)));
 
-        repository.revokeFamily(familyId, now.plusSeconds(12));
+        repository.revokeFamilyOrdered(familyId, now.plusSeconds(12));
         assertFalse(repository.findByTokenHash(repeat('c', 64)).get().isUsableAt(now.plusSeconds(13)));
         assertEquals(2, jdbc.queryForObject(
             "select count(*) from admin_refresh_session where family_id=? and revoked_at is not null",
@@ -111,7 +149,7 @@ class JdbcRefreshSessionRepositoryTest {
     }
 
     @Test
-    void rotationUsesIndependentTransactionAndSurvivesOuterRollback() {
+    void rotationParticipatesInApplicationTransactionAndRollsBackWithIt() {
         Instant now = Instant.parse("2026-08-25T10:00:00Z");
         UUID familyId = UUID.randomUUID();
         RefreshSession current = RefreshSession.issue(UUID.randomUUID(), userId, familyId,
@@ -126,7 +164,7 @@ class JdbcRefreshSessionRepositoryTest {
             return null;
         });
 
-        assertEquals(2, jdbc.queryForObject(
+        assertEquals(1, jdbc.queryForObject(
             "select count(*) from admin_refresh_session where family_id=?", Integer.class, familyId));
     }
 
@@ -155,10 +193,9 @@ class JdbcRefreshSessionRepositoryTest {
         };
         RefreshAdminSessionUseCase useCase = new RefreshAdminSessionUseCase(
             new JdbcAdminUserRepository(jdbc), accessTokens, losingTokens, repository,
-            Clock.fixed(now, ZoneOffset.UTC), Duration.ofDays(7));
+            new SpringApplicationTransaction(transactions), Clock.fixed(now, ZoneOffset.UTC), Duration.ofDays(7));
 
-        assertThrows(InvalidAuthenticationException.class,
-            () -> transactions.execute(status -> useCase.execute("original-token")));
+        assertThrows(InvalidAuthenticationException.class, () -> useCase.execute("original-token"));
 
         DriverManagerDataSource observerDataSource = new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -192,11 +229,13 @@ class JdbcRefreshSessionRepositoryTest {
         try {
             Future<Boolean> first = workers.submit(() -> {
                 start.await();
-                return repository.replaceIfUsable(current, firstReplacement, now);
+                return applicationTransactions.execute(
+                    () -> repository.replaceIfUsable(current, firstReplacement, now));
             });
             Future<Boolean> second = workers.submit(() -> {
                 start.await();
-                return repository.replaceIfUsable(current, secondReplacement, now);
+                return applicationTransactions.execute(
+                    () -> repository.replaceIfUsable(current, secondReplacement, now));
             });
 
             assertTrue(first.get(10, TimeUnit.SECONDS) ^ second.get(10, TimeUnit.SECONDS));

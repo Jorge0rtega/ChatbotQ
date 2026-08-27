@@ -27,7 +27,8 @@ public class AdminSecurityConfiguration {
             .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             .and().exceptionHandling().authenticationEntryPoint(entryPoint)
             .and().authorizeRequests()
-                .antMatchers("/api/admin/auth/login", "/api/admin/auth/refresh", "/api/admin/auth/logout").permitAll()
+                .antMatchers("/api/admin/auth/login", "/api/admin/auth/refresh", "/api/admin/auth/logout",
+                    "/api/admin/auth/complete-password-reset").permitAll()
                 .antMatchers("/api/admin/**").authenticated()
                 .anyRequest().permitAll()
             .and().addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);

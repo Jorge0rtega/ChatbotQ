@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.sql.Timestamp;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -78,6 +79,49 @@ class AdminAuthenticationJdbcHttpIntegrationTest {
             .andExpect(status().isUnauthorized());
         assertEquals(2, jdbc.queryForObject(
             "select count(*) from admin_refresh_session where revoked_at is not null", Integer.class));
+    }
+
+    @Test
+    void passwordResetRequiredCompletesWithoutSessionThenOnlyNewPasswordLogsIn() throws Exception {
+        jdbc.update("update admin_user set status='PASSWORD_RESET_REQUIRED',failed_login_count=3,"
+            + "locked_until=now()+interval '1 hour' where email='admin@example.com'");
+        mvc.perform(post("/api/admin/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"admin@example.com\",\"password\":\"correct\"}"))
+            .andExpect(status().isUnauthorized());
+
+        mvc.perform(post("/api/admin/auth/complete-password-reset").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"ADMIN@example.com\",\"temporaryPassword\":\"correct\","
+                    + "\"newPassword\":\"Permanent456\"}"))
+            .andExpect(status().isNoContent());
+
+        assertEquals("ACTIVE", jdbc.queryForObject("select status from admin_user", String.class));
+        assertEquals(0, jdbc.queryForObject("select failed_login_count from admin_user", Integer.class));
+        assertEquals(null, jdbc.queryForObject("select locked_until from admin_user", Timestamp.class));
+        mvc.perform(post("/api/admin/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"admin@example.com\",\"password\":\"correct\"}"))
+            .andExpect(status().isUnauthorized());
+        ok("/api/admin/auth/login", Collections.singletonMap("email", "admin@example.com"), "Permanent456");
+    }
+
+    @Test
+    void completePasswordResetUsesClosedGenericContract() throws Exception {
+        String unknown = mvc.perform(post("/api/admin/auth/complete-password-reset").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"missing@example.com\",\"temporaryPassword\":\"Temporary123\","
+                    + "\"newPassword\":\"Permanent456\"}"))
+            .andExpect(status().isUnauthorized()).andReturn().getResponse().getContentAsString();
+        String wrong = mvc.perform(post("/api/admin/auth/complete-password-reset").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"admin@example.com\",\"temporaryPassword\":\"wrong\","
+                    + "\"newPassword\":\"Permanent456\"}"))
+            .andExpect(status().isUnauthorized()).andReturn().getResponse().getContentAsString();
+        assertEquals(unknown, wrong);
+        mvc.perform(post("/api/admin/auth/complete-password-reset").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"admin@example.com\",\"email\":\"other@example.com\","
+                    + "\"temporaryPassword\":\"correct\",\"newPassword\":\"Permanent456\"}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/auth/complete-password-reset").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"admin@example.com\",\"temporaryPassword\":\"correct\","
+                    + "\"newPassword\":\"Permanent456\",\"admin\":true}"))
+            .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.chatbotq.identityaccess.application.usecase;
 import com.chatbotq.identityaccess.application.model.AuthenticationTokens;
 import com.chatbotq.identityaccess.application.port.AccessTokenIssuer;
 import com.chatbotq.identityaccess.application.port.AdminUserRepository;
+import com.chatbotq.identityaccess.application.port.ApplicationTransaction;
 import com.chatbotq.identityaccess.application.port.PasswordVerifier;
 import com.chatbotq.identityaccess.application.port.RefreshSessionRepository;
 import com.chatbotq.identityaccess.application.port.RefreshTokenManager;
@@ -46,10 +47,10 @@ class AdminAuthenticationUseCasesTest {
         AccessTokenIssuer accessTokens = (user, issuedAt) -> "access-for-" + user.getId();
         PasswordVerifier passwords = (raw, encoded) -> ("valid-password:" + raw).equals(encoded);
         login = new LoginAdminUseCase(users, passwords, "configured-dummy-hash", accessTokens,
-            refreshTokens, sessions, clock, REFRESH_TTL);
+            refreshTokens, sessions, directTransaction(), clock, REFRESH_TTL);
         refresh = new RefreshAdminSessionUseCase(users, accessTokens, refreshTokens,
-            sessions, clock, REFRESH_TTL);
-        logout = new LogoutAdminUseCase(refreshTokens, sessions, clock);
+            sessions, directTransaction(), clock, REFRESH_TTL);
+        logout = new LogoutAdminUseCase(refreshTokens, users, sessions, directTransaction(), clock);
         activeUser = AdminUser.create(UUID.randomUUID(), "admin@example.com",
             "valid-password:correct", true, NOW.minusSeconds(60));
         activeUser.activate(NOW.minusSeconds(30));
@@ -85,7 +86,7 @@ class AdminAuthenticationUseCasesTest {
         };
         LoginAdminUseCase configuredLogin = new LoginAdminUseCase(users, verifier,
             "$2a$12$configured-policy-dummy", (user, issuedAt) -> "unused", refreshTokens,
-            sessions, Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
+            sessions, directTransaction(), Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
 
         assertThrows(InvalidAuthenticationException.class,
             () -> configuredLogin.execute("missing@example.com", "guess"));
@@ -98,7 +99,8 @@ class AdminAuthenticationUseCasesTest {
         AccessTokenIssuer failingIssuer = (user, issuedAt) -> { throw new IllegalStateException("issuer failed"); };
         LoginAdminUseCase failingLogin = new LoginAdminUseCase(users,
             (raw, encoded) -> ("valid-password:" + raw).equals(encoded), "configured-dummy-hash",
-            failingIssuer, refreshTokens, sessions, Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
+            failingIssuer, refreshTokens, sessions, directTransaction(),
+            Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
 
         assertThrows(IllegalStateException.class,
             () -> failingLogin.execute("admin@example.com", "correct"));
@@ -111,7 +113,7 @@ class AdminAuthenticationUseCasesTest {
         String currentToken = login.execute("admin@example.com", "correct").getRefreshToken();
         AccessTokenIssuer failingIssuer = (user, issuedAt) -> { throw new IllegalStateException("issuer failed"); };
         RefreshAdminSessionUseCase failingRefresh = new RefreshAdminSessionUseCase(users, failingIssuer,
-            refreshTokens, sessions, Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
+            refreshTokens, sessions, directTransaction(), Clock.fixed(NOW, ZoneOffset.UTC), REFRESH_TTL);
 
         assertThrows(IllegalStateException.class, () -> failingRefresh.execute(currentToken));
 
@@ -176,6 +178,12 @@ class AdminAuthenticationUseCasesTest {
         assertEquals("invalid credentials", failure.getMessage());
     }
 
+    private static ApplicationTransaction directTransaction() {
+        return new ApplicationTransaction() {
+            @Override public <T> T execute(java.util.function.Supplier<T> work) { return work.get(); }
+        };
+    }
+
     private static final class InMemoryUsers implements AdminUserRepository {
         private final Map<UUID, AdminUser> byId = new HashMap<>();
         private final Map<String, AdminUser> byEmail = new HashMap<>();
@@ -202,7 +210,7 @@ class AdminAuthenticationUseCasesTest {
             byHash.put(created.getTokenHash(), created);
             return true;
         }
-        @Override public void revokeFamily(UUID familyId, Instant now) {
+        @Override public void revokeFamilyOrdered(UUID familyId, Instant now) {
             familyRevoked = true;
             for (RefreshSession session : byHash.values()) {
                 if (familyId.equals(session.getFamilyId())) session.revoke(now);

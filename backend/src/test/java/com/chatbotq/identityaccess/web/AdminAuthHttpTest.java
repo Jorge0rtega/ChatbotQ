@@ -1,10 +1,13 @@
 package com.chatbotq.identityaccess.web;
 
 import com.chatbotq.identityaccess.application.port.AccessTokenIssuer;
+import com.chatbotq.identityaccess.application.port.ApplicationTransaction;
 import com.chatbotq.identityaccess.application.port.AdminUserRepository;
+import com.chatbotq.identityaccess.application.port.PasswordHasher;
 import com.chatbotq.identityaccess.application.port.PasswordVerifier;
 import com.chatbotq.identityaccess.application.port.RefreshSessionRepository;
 import com.chatbotq.identityaccess.application.port.RefreshTokenManager;
+import com.chatbotq.identityaccess.application.usecase.CompleteAdminPasswordResetUseCase;
 import com.chatbotq.identityaccess.application.usecase.LoginAdminUseCase;
 import com.chatbotq.identityaccess.application.usecase.LogoutAdminUseCase;
 import com.chatbotq.identityaccess.application.usecase.RefreshAdminSessionUseCase;
@@ -189,15 +192,28 @@ class AdminAuthHttpTest {
             return new JwtAccessTokenService("test-only-signing-key-at-least-thirty-two-bytes-long",
                 "chatbotq-test", Duration.ofMinutes(5));
         }
-        @Bean LoginAdminUseCase login(JwtAccessTokenService jwt) {
+        @Bean ApplicationTransaction transaction() {
+            return new ApplicationTransaction() {
+                public <T> T execute(java.util.function.Supplier<T> work) { return work.get(); }
+            };
+        }
+        @Bean LoginAdminUseCase login(JwtAccessTokenService jwt, ApplicationTransaction transaction) {
             PasswordVerifier passwords = (raw, encoded) -> ("hash:" + raw).equals(encoded);
             return new LoginAdminUseCase(store, passwords, "test-dummy-hash", jwt,
-                refreshTokens, store, clock, Duration.ofDays(7));
+                refreshTokens, store, transaction, clock, Duration.ofDays(7));
         }
-        @Bean RefreshAdminSessionUseCase refresh(JwtAccessTokenService jwt) {
-            return new RefreshAdminSessionUseCase(store, jwt, refreshTokens, store, clock, Duration.ofDays(7));
+        @Bean RefreshAdminSessionUseCase refresh(JwtAccessTokenService jwt, ApplicationTransaction transaction) {
+            return new RefreshAdminSessionUseCase(
+                store, jwt, refreshTokens, store, transaction, clock, Duration.ofDays(7));
         }
-        @Bean LogoutAdminUseCase logout() { return new LogoutAdminUseCase(refreshTokens, store, clock); }
+        @Bean LogoutAdminUseCase logout(ApplicationTransaction transaction) {
+            return new LogoutAdminUseCase(refreshTokens, store, store, transaction, clock);
+        }
+        @Bean CompleteAdminPasswordResetUseCase complete(ApplicationTransaction transaction) {
+            PasswordVerifier verifier = (raw, encoded) -> ("hash:" + raw).equals(encoded);
+            PasswordHasher hasher = raw -> "hash:" + raw;
+            return new CompleteAdminPasswordResetUseCase(store, verifier, hasher, store, transaction, clock);
+        }
     }
 
     static final class SequenceTokens implements RefreshTokenManager {
@@ -215,6 +231,7 @@ class AdminAuthHttpTest {
             return users.values().stream().filter(u -> u.getEmail().equalsIgnoreCase(email)).findFirst();
         }
         public AdminUser save(AdminUser user) { users.put(user.getId(), user); return user; }
+        public void completePasswordReset(UUID id, String hash, Instant now) { }
         public void save(RefreshSession session) { sessions.put(session.getTokenHash(), session); }
         public Optional<RefreshSession> findByTokenHash(String hash) { return Optional.ofNullable(sessions.get(hash)); }
         public boolean replaceIfUsable(RefreshSession current, RefreshSession replacement, Instant now) {
@@ -222,8 +239,11 @@ class AdminAuthHttpTest {
             current.rotate(replacement.getId(), replacement.getTokenHash(), now, replacement.getExpiresAt());
             sessions.put(replacement.getTokenHash(), replacement); return true;
         }
-        public void revokeFamily(UUID family, Instant now) {
+        public void revokeFamilyOrdered(UUID family, Instant now) {
             sessions.values().stream().filter(s -> family.equals(s.getFamilyId())).forEach(s -> s.revoke(now));
+        }
+        public void revokeAllByUserOrdered(UUID userId, Instant now) {
+            sessions.values().stream().filter(s -> userId.equals(s.getUserId())).forEach(s -> s.revoke(now));
         }
     }
 }

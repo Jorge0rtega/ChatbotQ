@@ -68,6 +68,28 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
     }
 
     @Override
+    public Optional<AdminUser> findByIdForUpdate(UUID id) {
+        if (id == null) throw new IllegalArgumentException("id must not be null");
+        List<AdminUser> users = queryUsers("where id = ? for update", id);
+        return users.isEmpty() ? Optional.empty() : Optional.of(users.get(0));
+    }
+
+    @Override
+    public Optional<AdminUser> findByEmailForUpdate(String normalizedEmail) {
+        if (normalizedEmail == null || normalizedEmail.trim().isEmpty()) return Optional.empty();
+        List<AdminUser> users = queryUsers("where lower(email) = lower(?) for update", normalizedEmail.trim());
+        return users.isEmpty() ? Optional.empty() : Optional.of(users.get(0));
+    }
+
+    @Override
+    public void completePasswordReset(UUID id, String passwordHash, java.time.Instant now) {
+        int updated = jdbc.update("update admin_user set password_hash=?,status='ACTIVE',failed_login_count=0,"
+                + "locked_until=null,updated_at=? where id=? and status='PASSWORD_RESET_REQUIRED'",
+            passwordHash, Timestamp.from(now), id);
+        if (updated != 1) throw new IllegalStateException("password reset state changed while row was locked");
+    }
+
+    @Override
     public AdminUser save(AdminUser user) {
         if (user == null) {
             throw new IllegalArgumentException("user must not be null");
