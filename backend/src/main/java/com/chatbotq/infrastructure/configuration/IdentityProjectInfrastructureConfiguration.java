@@ -24,7 +24,12 @@ import com.chatbotq.identityaccess.infrastructure.persistence.JdbcProjectAdminis
 import com.chatbotq.identityaccess.infrastructure.persistence.JdbcUserProjectAssignmentRepository;
 import com.chatbotq.identityaccess.infrastructure.security.BCryptPasswordHasher;
 import com.chatbotq.infrastructure.identity.UuidAdminUserIdentityGenerator;
+import com.chatbotq.infrastructure.identity.UuidKnowledgeEntryIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
+import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
+import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
+import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
@@ -62,6 +67,23 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     JdbcProjectAdministrationAdapter projectAdministrationAdapter(JdbcTemplate jdbc) {
         return new JdbcProjectAdministrationAdapter(jdbc);
+    }
+
+    @Bean
+    KnowledgeAdministrationPort knowledgeAdministrationPort(JdbcTemplate jdbc) {
+        return new JdbcKnowledgeAdministrationAdapter(jdbc);
+    }
+
+    @Bean
+    KnowledgeEntryIdentityGenerator knowledgeEntryIdentityGenerator() {
+        return new UuidKnowledgeEntryIdentityGenerator();
+    }
+
+    @Bean
+    AdministerKnowledgeUseCase administerKnowledgeUseCase(KnowledgeAdministrationPort entries,
+                                                           KnowledgeEntryIdentityGenerator identities,
+                                                           Clock clock) {
+        return new AdministerKnowledgeUseCase(entries, identities, clock);
     }
 
     @Bean

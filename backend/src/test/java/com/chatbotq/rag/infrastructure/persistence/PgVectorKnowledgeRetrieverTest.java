@@ -31,6 +31,7 @@ class PgVectorKnowledgeRetrieverTest {
     private static UUID projectB;
     private static UUID hiddenCrossProjectEntry;
     private static UUID inactiveEntry;
+    private static UUID pendingEntryWithVector;
     private static final Set<UUID> PROJECT_A_ENTRIES = new HashSet<>();
 
     @BeforeAll
@@ -52,6 +53,7 @@ class PgVectorKnowledgeRetrieverTest {
         Flyway.configure()
             .dataSource(jdbcUrl, username, password)
             .locations("classpath:db/migration")
+            .target("008")
             .load()
             .migrate();
 
@@ -66,12 +68,14 @@ class PgVectorKnowledgeRetrieverTest {
         for (int index = 0; index < 6; index++) {
             UUID id = UUID.randomUUID();
             PROJECT_A_ENTRIES.add(id);
-            insertKnowledge(id, projectA, true, vector(1.0f, index * 0.01f));
+            insertKnowledge(id, projectA, true, "READY", vector(1.0f, index * 0.01f));
         }
         hiddenCrossProjectEntry = UUID.randomUUID();
-        insertKnowledge(hiddenCrossProjectEntry, projectB, true, vector(1.0f, 0.0f));
+        insertKnowledge(hiddenCrossProjectEntry, projectB, true, "READY", vector(1.0f, 0.0f));
         inactiveEntry = UUID.randomUUID();
-        insertKnowledge(inactiveEntry, projectA, false, vector(1.0f, 0.0f));
+        insertKnowledge(inactiveEntry, projectA, false, "READY", vector(1.0f, 0.0f));
+        pendingEntryWithVector = UUID.randomUUID();
+        insertKnowledge(pendingEntryWithVector, projectA, true, "PENDING", vector(1.0f, 0.0f));
     }
 
     @AfterAll
@@ -95,13 +99,14 @@ class PgVectorKnowledgeRetrieverTest {
         assertTrue(candidates.stream().allMatch(candidate -> PROJECT_A_ENTRIES.contains(candidate.getKnowledgeEntryId())));
         assertFalse(candidates.stream().anyMatch(candidate -> candidate.getKnowledgeEntryId().equals(hiddenCrossProjectEntry)));
         assertFalse(candidates.stream().anyMatch(candidate -> candidate.getKnowledgeEntryId().equals(inactiveEntry)));
+        assertFalse(candidates.stream().anyMatch(candidate -> candidate.getKnowledgeEntryId().equals(pendingEntryWithVector)));
         assertTrue(candidates.get(0).getSimilarityScore() >= candidates.get(4).getSimilarityScore());
     }
 
     @Test
     void rejectsCandidatesBelowThreshold() {
         UUID orthogonal = UUID.randomUUID();
-        insertKnowledge(orthogonal, projectA, true, vector(0.0f, 1.0f));
+        insertKnowledge(orthogonal, projectA, true, "READY", vector(0.0f, 1.0f));
         PgVectorKnowledgeRetriever retriever = new PgVectorKnowledgeRetriever(jdbc);
 
         List<RetrievalCandidate> candidates = retriever.retrieve(
@@ -111,11 +116,11 @@ class PgVectorKnowledgeRetrieverTest {
         assertEquals(orthogonal, candidates.get(0).getKnowledgeEntryId());
     }
 
-    private static void insertKnowledge(UUID id, UUID projectId, boolean active, String embedding) {
+    private static void insertKnowledge(UUID id, UUID projectId, boolean active, String embeddingStatus, String embedding) {
         jdbc.update("insert into knowledge_entry "
-                + "(id, project_id, external_id, question, answer, active, embedding, embedded_at) "
-                + "values (?, ?, ?, ?, ?, ?, cast(? as vector), current_timestamp)",
-            id, projectId, id.toString(), "Pregunta " + id, "Respuesta " + id, active, embedding);
+                + "(id, project_id, external_id, question, answer, active, embedding_status, embedding, embedded_at) "
+                + "values (?, ?, ?, ?, ?, ?, ?, cast(? as vector), current_timestamp)",
+            id, projectId, id.toString(), "Pregunta " + id, "Respuesta " + id, active, embeddingStatus, embedding);
     }
 
     private static float[] basisVector() {

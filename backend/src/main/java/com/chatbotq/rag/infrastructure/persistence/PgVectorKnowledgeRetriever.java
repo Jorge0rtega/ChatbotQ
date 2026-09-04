@@ -36,7 +36,7 @@ public final class PgVectorKnowledgeRetriever {
             + "from (select id as knowledge_entry_id, question, answer, "
             + "1 - (embedding <=> cast(? as vector)) as similarity_score "
             + "from knowledge_entry "
-            + "where project_id = ? and active = true and embedding is not null) candidates "
+            + "where project_id = ? and active = true and embedding_status = 'READY' and embedding is not null) candidates "
             + "where similarity_score >= ? "
             + "order by similarity_score desc, knowledge_entry_id "
             + "limit ?";
