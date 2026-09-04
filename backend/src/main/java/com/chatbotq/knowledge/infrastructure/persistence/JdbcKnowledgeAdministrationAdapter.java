@@ -1,6 +1,7 @@
 package com.chatbotq.knowledge.infrastructure.persistence;
 
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
+import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeEntryNotFoundException;
@@ -13,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.UUID;
 
 public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrationPort {
@@ -79,6 +81,36 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
         return outcome.entry;
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size, long offset) {
+        final List<ManagedKnowledgeEntry> entries = new ArrayList<>();
+        List<ListOutcome> outcomes = jdbc.query(
+            "with actor as materialized (select u.id,u.is_general_admin from admin_user u where u.id=? "
+                + "and u.status='ACTIVE' and (u.locked_until is null or u.locked_until<=current_timestamp)), "
+                + "target as materialized (select p.id,p.status from project p where p.id=?), "
+                + "decision as materialized (select exists (select 1 from actor a where a.is_general_admin) general_admin, "
+                + "exists (select 1 from target) project_exists, exists (select 1 from actor a join target p "
+                + "on p.status='ACTIVE' where a.is_general_admin or exists (select 1 from user_project_role upr "
+                + "where upr.user_id=a.id and upr.project_id=p.id and upr.role='PROJECT_ADMIN')) authorized), "
+                + "base as materialized (select e.id,e.project_id,e.question,e.answer,e.external_id,e.active,"
+                + "e.embedding_status,e.embedding_revision,e.created_at,e.updated_at from knowledge_entry e "
+                + "join target t on t.id=e.project_id cross join decision d where d.authorized and (cast(? as text) is null "
+                + "or lower(e.question) like '%' || lower(?) || '%' escape '\\' or lower(coalesce(e.external_id,'')) like '%' || lower(?) || '%' escape '\\')), "
+                + "totals as (select count(*) total_elements from base), paged as (select * from base order by updated_at desc,id asc "
+                + "limit ? offset ?) select d.general_admin,d.project_exists,d.authorized,p.id,p.project_id,p.question,p.answer,"
+                + "p.external_id,p.active,p.embedding_status,p.embedding_revision,p.created_at,p.updated_at,t.total_elements "
+                + "from decision d cross join totals t left join paged p on true order by p.updated_at desc,p.id asc",
+            (rs, rowNum) -> mapListOutcome(rs), actorId, projectId, query, query, query, size, offset);
+        ListOutcome outcome = outcomes.get(0);
+        if (!outcome.authorized) {
+            if (outcome.generalAdmin && !outcome.projectExists) throw new ProjectNotFoundException();
+            throw new ForbiddenKnowledgeAdministrationException();
+        }
+        for (ListOutcome row : outcomes) if (row.entry != null) entries.add(row.entry);
+        return new ManagedKnowledgeEntryPage(entries, page, size, outcome.totalElements);
+    }
+
     private static CreateOutcome mapOutcome(ResultSet rs) throws SQLException {
         boolean authorized = rs.getBoolean("authorized");
         ManagedKnowledgeEntry entry = null;
@@ -101,6 +133,30 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
         }
         return new ReadOutcome(rs.getBoolean("general_admin"), rs.getBoolean("project_exists"),
             rs.getBoolean("authorized"), entry);
+    }
+
+    private static ListOutcome mapListOutcome(ResultSet rs) throws SQLException {
+        ManagedKnowledgeEntry entry = rs.getObject("id") == null ? null : new ManagedKnowledgeEntry(
+            (UUID) rs.getObject("id"), (UUID) rs.getObject("project_id"), rs.getString("question"),
+            rs.getString("answer"), rs.getString("external_id"), rs.getBoolean("active"),
+            rs.getString("embedding_status"), rs.getLong("embedding_revision"),
+            rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
+        return new ListOutcome(rs.getBoolean("general_admin"), rs.getBoolean("project_exists"),
+            rs.getBoolean("authorized"), rs.getLong("total_elements"), entry);
+    }
+
+    private static final class ListOutcome {
+        private final boolean generalAdmin;
+        private final boolean projectExists;
+        private final boolean authorized;
+        private final long totalElements;
+        private final ManagedKnowledgeEntry entry;
+
+        private ListOutcome(boolean generalAdmin, boolean projectExists, boolean authorized, long totalElements,
+                            ManagedKnowledgeEntry entry) {
+            this.generalAdmin = generalAdmin; this.projectExists = projectExists; this.authorized = authorized;
+            this.totalElements = totalElements; this.entry = entry;
+        }
     }
 
     private static final class ReadOutcome {

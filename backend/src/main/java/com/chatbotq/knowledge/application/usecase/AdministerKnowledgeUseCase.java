@@ -1,6 +1,7 @@
 package com.chatbotq.knowledge.application.usecase;
 
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
+import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 
@@ -8,6 +9,9 @@ import java.time.Clock;
 import java.util.UUID;
 
 public final class AdministerKnowledgeUseCase {
+    public static final int DEFAULT_PAGE_SIZE = 20;
+    public static final int MAX_PAGE_SIZE = 100;
+    public static final long MAX_OFFSET = 1_000_000L;
     private final KnowledgeAdministrationPort entries;
     private final KnowledgeEntryIdentityGenerator identities;
     private final Clock clock;
@@ -30,6 +34,28 @@ public final class AdministerKnowledgeUseCase {
     public ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId) {
         return entries.get(require(actorId, "actorId"), require(projectId, "projectId"),
             require(entryId, "entryId"));
+    }
+
+    public ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size) {
+        require(actorId, "actorId");
+        require(projectId, "projectId");
+        if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
+            throw new IllegalArgumentException("page must be non-negative and size must be between 1 and 100");
+        }
+        final long offset;
+        try {
+            offset = Math.multiplyExact((long) page, (long) size);
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException("requested page offset is too large", overflow);
+        }
+        if (offset > MAX_OFFSET) throw new IllegalArgumentException("requested page offset is too large");
+        String normalizedQuery = normalize(query, "q", 200, true);
+        return entries.list(actorId, projectId, escapeLike(normalizedQuery), page, size, offset);
+    }
+
+    private static String escapeLike(String value) {
+        if (value == null) return null;
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     private static String normalize(String value, String name, int maximum, boolean optional) {

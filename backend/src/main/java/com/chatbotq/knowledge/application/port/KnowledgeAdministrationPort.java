@@ -1,6 +1,7 @@
 package com.chatbotq.knowledge.application.port;
 
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
+import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -10,4 +11,6 @@ public interface KnowledgeAdministrationPort {
                                  String externalId, boolean active, Instant now);
 
     ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId);
+
+    ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size, long offset);
 }

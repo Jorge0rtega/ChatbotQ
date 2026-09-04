@@ -2,6 +2,7 @@ package com.chatbotq.knowledge.web;
 
 import com.chatbotq.identityaccess.infrastructure.security.AdminAccessPrincipal;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
+import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -12,12 +13,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/admin/projects/{projectId}/knowledge")
@@ -37,6 +41,14 @@ public final class AdminKnowledgeController {
         URI location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
             .buildAndExpand(created.getId()).toUri();
         return ResponseEntity.created(location).body(KnowledgeResponse.from(created));
+    }
+
+    @GetMapping
+    KnowledgePageResponse list(Authentication authentication, @PathVariable String projectId,
+                               @RequestParam(defaultValue = "0") int page,
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false, name = "q") String query) {
+        return KnowledgePageResponse.from(knowledge.list(actor(authentication), canonicalProjectId(projectId), query, page, size));
     }
 
     @GetMapping("/{entryId}")
@@ -162,5 +174,32 @@ public final class AdminKnowledgeController {
         public long getEmbeddingRevision() { return embeddingRevision; }
         public Instant getCreatedAt() { return createdAt; }
         public Instant getUpdatedAt() { return updatedAt; }
+    }
+
+    static final class KnowledgePageResponse {
+        private final List<KnowledgeResponse> items;
+        private final int page;
+        private final int size;
+        private final long totalElements;
+        private final long totalPages;
+
+        private KnowledgePageResponse(List<KnowledgeResponse> items, int page, int size, long totalElements,
+                                      long totalPages) {
+            this.items = items; this.page = page; this.size = size;
+            this.totalElements = totalElements; this.totalPages = totalPages;
+        }
+
+        static KnowledgePageResponse from(ManagedKnowledgeEntryPage source) {
+            List<KnowledgeResponse> items = new ArrayList<>();
+            for (ManagedKnowledgeEntry entry : source.getItems()) items.add(KnowledgeResponse.from(entry));
+            return new KnowledgePageResponse(items, source.getPage(), source.getSize(), source.getTotalElements(),
+                source.getTotalPages());
+        }
+
+        public List<KnowledgeResponse> getItems() { return items; }
+        public int getPage() { return page; }
+        public int getSize() { return size; }
+        public long getTotalElements() { return totalElements; }
+        public long getTotalPages() { return totalPages; }
     }
 }
