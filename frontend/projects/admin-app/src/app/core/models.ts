@@ -20,6 +20,12 @@ export interface ProjectIdsResponse {
   projectIds: readonly string[];
 }
 
+export interface ProjectSiteKey {
+  siteKey: string;
+  version: number;
+  rotatedAt: string;
+}
+
 export interface PageResponse<T> {
   items: T[];
   page: number;

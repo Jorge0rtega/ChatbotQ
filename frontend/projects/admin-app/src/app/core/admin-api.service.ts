@@ -8,6 +8,7 @@ import {
   PageResponse,
   Project,
   ProjectIdsResponse,
+  ProjectSiteKey,
 } from './models';
 
 const MAX_PROJECT_PAGES = 1000;
@@ -74,6 +75,17 @@ export class AdminApiService {
     return this.http.post<void>(
       `/api/admin/projects/${id}/${active ? 'activate' : 'deactivate'}`,
       {},
+    );
+  }
+
+  getProjectSiteKey(projectId: string): Observable<ProjectSiteKey> {
+    return this.http.get<ProjectSiteKey>(`/api/admin/projects/${encodeURIComponent(projectId)}/site-key`);
+  }
+
+  rotateProjectSiteKey(projectId: string, expectedVersion: number): Observable<ProjectSiteKey> {
+    return this.http.post<ProjectSiteKey>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/site-key/rotate`,
+      { expectedVersion },
     );
   }
 

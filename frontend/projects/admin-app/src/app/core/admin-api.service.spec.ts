@@ -53,6 +53,18 @@ describe('AdminApiService contracts', () => {
     expect(put.request.body).toEqual({ projectIds: ['p2', 'p1'] });
   });
 
+  it('uses exact siteKey read and rotation contracts', () => {
+    api.getProjectSiteKey('p 1').subscribe();
+    const get = http.expectOne('/api/admin/projects/p%201/site-key');
+    expect(get.request.method).toBe('GET');
+    expect(get.request.body).toBeNull();
+
+    api.rotateProjectSiteKey('p 1', 7).subscribe();
+    const post = http.expectOne('/api/admin/projects/p%201/site-key/rotate');
+    expect(post.request.method).toBe('POST');
+    expect(post.request.body).toEqual({ expectedVersion: 7 });
+  });
+
   it('lists every project page serially with size 100 and stable item order', () => {
     let result: readonly Project[] | undefined;
     api.listAllProjects().subscribe((projects) => (result = projects));
