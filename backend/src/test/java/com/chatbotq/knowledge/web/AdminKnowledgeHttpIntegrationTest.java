@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -276,10 +277,121 @@ class AdminKnowledgeHttpIntegrationTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from knowledge_entry", Integer.class));
     }
 
+    @Test
+    void generalAdminReadsExistingKnowledgeWithAllPublicLifecycleFields() throws Exception {
+        String token = login("general-knowledge@example.com");
+        JsonNode created = createKnowledge(token, projectId, "Question", "Answer", "external-id", false);
+
+        mvc.perform(get(knowledgePath(projectId, created.get("id").asText()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(created.get("id").asText()))
+            .andExpect(jsonPath("$.projectId").value(projectId.toString()))
+            .andExpect(jsonPath("$.question").value("Question"))
+            .andExpect(jsonPath("$.answer").value("Answer"))
+            .andExpect(jsonPath("$.externalId").value("external-id"))
+            .andExpect(jsonPath("$.active").value(false))
+            .andExpect(jsonPath("$.embeddingStatus").value("PENDING"))
+            .andExpect(jsonPath("$.embeddingRevision").value(1))
+            .andExpect(jsonPath("$.createdAt").value(created.get("createdAt").asText()))
+            .andExpect(jsonPath("$.updatedAt").value(created.get("updatedAt").asText()));
+    }
+
+    @Test
+    void assignedProjectAdminReadsOnlyKnowledgeInCurrentAssignment() throws Exception {
+        String generalToken = login("general-knowledge@example.com");
+        JsonNode assigned = createKnowledge(generalToken, projectId, "Assigned", "Answer", null, true);
+        JsonNode other = createKnowledge(generalToken, otherProjectId, "Other", "Answer", null, true);
+        String projectToken = login("project-knowledge@example.com");
+
+        mvc.perform(get(knowledgePath(projectId, assigned.get("id").asText()))
+                .header("Authorization", "Bearer " + projectToken))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(assigned.get("id").asText()));
+        mvc.perform(get(knowledgePath(otherProjectId, other.get("id").asText()))
+                .header("Authorization", "Bearer " + projectToken))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+    }
+
+    @Test
+    void projectAdminWithoutCurrentAssignmentGetsForbiddenWithoutEntryLeak() throws Exception {
+        String generalToken = login("general-knowledge@example.com");
+        JsonNode entry = createKnowledge(generalToken, projectId, "Question", "Answer", null, true);
+        String projectToken = login("project-knowledge@example.com");
+        jdbc.update("delete from user_project_role where user_id=? and project_id=?", projectAdmin.getId(), projectId);
+
+        mvc.perform(get(knowledgePath(projectId, entry.get("id").asText()))
+                .header("Authorization", "Bearer " + projectToken))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+    }
+
+    @Test
+    void visibleGeneralAdminGetsNotFoundForNonexistentKnowledgeEntry() throws Exception {
+        String token = login("general-knowledge@example.com");
+
+        mvc.perform(get(knowledgePath(projectId, UUID.randomUUID()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void mismatchedKnowledgeEntryDoesNotLeakAcrossProjectPath() throws Exception {
+        String generalToken = login("general-knowledge@example.com");
+        JsonNode otherEntry = createKnowledge(generalToken, otherProjectId, "Other", "Answer", null, true);
+        String projectToken = login("project-knowledge@example.com");
+
+        mvc.perform(get(knowledgePath(projectId, otherEntry.get("id").asText()))
+                .header("Authorization", "Bearer " + generalToken))
+            .andExpect(status().isNotFound());
+        mvc.perform(get(knowledgePath(otherProjectId, otherEntry.get("id").asText()))
+                .header("Authorization", "Bearer " + projectToken))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+    }
+
+    @Test
+    void inactiveProjectGetsForbiddenBeforeKnowledgeLookup() throws Exception {
+        String token = login("general-knowledge@example.com");
+        JsonNode entry = createKnowledge(token, projectId, "Question", "Answer", null, true);
+        jdbc.update("update project set status='DISABLED' where id=?", projectId);
+
+        mvc.perform(get(knowledgePath(projectId, entry.get("id").asText()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+        mvc.perform(get(knowledgePath(projectId, UUID.randomUUID()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+    }
+
+    @Test
+    void rejectsNonCanonicalProjectAndKnowledgeEntryIdsBeforeLookup() throws Exception {
+        String token = login("general-knowledge@example.com");
+        JsonNode entry = createKnowledge(token, projectId, "Question", "Answer", null, true);
+
+        mvc.perform(get(knowledgePath(projectId.toString().toUpperCase(), entry.get("id").asText()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("invalid_request"));
+        mvc.perform(get(knowledgePath(projectId, entry.get("id").asText().toUpperCase()))
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("invalid_request"));
+    }
+
     private static String repeat(char character, int count) {
         StringBuilder value = new StringBuilder(count);
         for (int index = 0; index < count; index++) value.append(character);
         return value.toString();
+    }
+
+    private JsonNode createKnowledge(String token, UUID targetProjectId, String question, String answer,
+                                     String externalId, boolean active) throws Exception {
+        String externalIdField = externalId == null ? "" : ",\"externalId\":\"" + externalId + "\"";
+        return json.readTree(mvc.perform(post("/api/admin/projects/" + targetProjectId + "/knowledge")
+                .header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"question\":\"" + question + "\",\"answer\":\"" + answer + "\""
+                    + externalIdField + ",\"active\":" + active + "}"))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+    }
+
+    private static String knowledgePath(Object targetProjectId, Object entryId) {
+        return "/api/admin/projects/" + targetProjectId + "/knowledge/" + entryId;
     }
 
     private String login(String email) throws Exception {

@@ -3,6 +3,7 @@ package com.chatbotq.knowledge.infrastructure.persistence;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
+import com.chatbotq.knowledge.application.usecase.KnowledgeEntryNotFoundException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +52,33 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
         return outcome.entry;
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId) {
+        List<ReadOutcome> outcomes = jdbc.query(
+            "with actor as materialized (select u.id,u.is_general_admin from admin_user u where u.id=? "
+                + "and u.status='ACTIVE' and (u.locked_until is null or u.locked_until<=current_timestamp)), "
+                + "target as materialized (select p.id,p.status from project p where p.id=?), "
+                + "decision as materialized (select exists (select 1 from actor a where a.is_general_admin) "
+                + "general_admin, exists (select 1 from target) project_exists, exists (select 1 from actor a "
+                + "join target p on p.status='ACTIVE' where a.is_general_admin or exists (select 1 "
+                + "from user_project_role upr where upr.user_id=a.id and upr.project_id=p.id "
+                + "and upr.role='PROJECT_ADMIN')) authorized), entry as materialized (select e.id,e.project_id,"
+                + "e.question,e.answer,e.external_id,e.active,e.embedding_status,e.embedding_revision,e.created_at,"
+                + "e.updated_at from knowledge_entry e join target t on t.id=e.project_id cross join decision d "
+                + "where e.id=? and d.authorized) select d.general_admin,d.project_exists,d.authorized,e.id,"
+                + "e.project_id,e.question,e.answer,e.external_id,e.active,e.embedding_status,e.embedding_revision,"
+                + "e.created_at,e.updated_at from decision d left join entry e on true",
+            (rs, rowNum) -> mapReadOutcome(rs), actorId, projectId, entryId);
+        ReadOutcome outcome = outcomes.get(0);
+        if (!outcome.authorized) {
+            if (outcome.generalAdmin && !outcome.projectExists) throw new ProjectNotFoundException();
+            throw new ForbiddenKnowledgeAdministrationException();
+        }
+        if (outcome.entry == null) throw new KnowledgeEntryNotFoundException();
+        return outcome.entry;
+    }
+
     private static CreateOutcome mapOutcome(ResultSet rs) throws SQLException {
         boolean authorized = rs.getBoolean("authorized");
         ManagedKnowledgeEntry entry = null;
@@ -61,6 +89,33 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
         }
         return new CreateOutcome(rs.getBoolean("general_admin"), rs.getBoolean("project_exists"), authorized, entry);
+    }
+
+    private static ReadOutcome mapReadOutcome(ResultSet rs) throws SQLException {
+        ManagedKnowledgeEntry entry = null;
+        if (rs.getObject("id") != null) {
+            entry = new ManagedKnowledgeEntry((UUID) rs.getObject("id"), (UUID) rs.getObject("project_id"),
+                rs.getString("question"), rs.getString("answer"), rs.getString("external_id"),
+                rs.getBoolean("active"), rs.getString("embedding_status"), rs.getLong("embedding_revision"),
+                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
+        }
+        return new ReadOutcome(rs.getBoolean("general_admin"), rs.getBoolean("project_exists"),
+            rs.getBoolean("authorized"), entry);
+    }
+
+    private static final class ReadOutcome {
+        private final boolean generalAdmin;
+        private final boolean projectExists;
+        private final boolean authorized;
+        private final ManagedKnowledgeEntry entry;
+
+        private ReadOutcome(boolean generalAdmin, boolean projectExists, boolean authorized,
+                            ManagedKnowledgeEntry entry) {
+            this.generalAdmin = generalAdmin;
+            this.projectExists = projectExists;
+            this.authorized = authorized;
+            this.entry = entry;
+        }
     }
 
     private static final class CreateOutcome {

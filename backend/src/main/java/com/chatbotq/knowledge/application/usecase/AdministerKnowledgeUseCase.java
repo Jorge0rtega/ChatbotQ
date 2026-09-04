@@ -27,6 +27,11 @@ public final class AdministerKnowledgeUseCase {
             clock.instant());
     }
 
+    public ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId) {
+        return entries.get(require(actorId, "actorId"), require(projectId, "projectId"),
+            require(entryId, "entryId"));
+    }
+
     private static String normalize(String value, String name, int maximum, boolean optional) {
         if (value == null) {
             if (optional) return null;

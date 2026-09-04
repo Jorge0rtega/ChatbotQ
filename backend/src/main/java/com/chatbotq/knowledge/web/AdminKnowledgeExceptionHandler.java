@@ -1,6 +1,7 @@
 package com.chatbotq.knowledge.web;
 
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
+import com.chatbotq.knowledge.application.usecase.KnowledgeEntryNotFoundException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +23,11 @@ public final class AdminKnowledgeExceptionHandler {
 
     @ExceptionHandler(ProjectNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound() { return error(HttpStatus.NOT_FOUND, "project_not_found"); }
+
+    @ExceptionHandler(KnowledgeEntryNotFoundException.class)
+    ResponseEntity<Map<String, String>> knowledgeEntryNotFound() {
+        return error(HttpStatus.NOT_FOUND, "knowledge_entry_not_found");
+    }
 
     @ExceptionHandler(DuplicateKeyException.class)
     ResponseEntity<Map<String, String>> duplicateExternalId(DuplicateKeyException duplicate) {

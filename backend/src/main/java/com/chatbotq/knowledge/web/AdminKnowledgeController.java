@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,16 +39,30 @@ public final class AdminKnowledgeController {
         return ResponseEntity.created(location).body(KnowledgeResponse.from(created));
     }
 
+    @GetMapping("/{entryId}")
+    KnowledgeResponse get(Authentication authentication, @PathVariable String projectId, @PathVariable String entryId) {
+        return KnowledgeResponse.from(knowledge.get(actor(authentication), canonicalProjectId(projectId),
+            canonicalEntryId(entryId)));
+    }
+
     private static UUID canonicalProjectId(String raw) {
-        if (raw == null) throw new IllegalArgumentException("projectId is required");
+        return canonicalUuid(raw, "projectId");
+    }
+
+    private static UUID canonicalEntryId(String raw) {
+        return canonicalUuid(raw, "entryId");
+    }
+
+    private static UUID canonicalUuid(String raw, String name) {
+        if (raw == null) throw new IllegalArgumentException(name + " is required");
         final UUID parsed;
         try {
             parsed = UUID.fromString(raw);
         } catch (IllegalArgumentException invalid) {
-            throw new IllegalArgumentException("projectId must be a canonical UUID", invalid);
+            throw new IllegalArgumentException(name + " must be a canonical UUID", invalid);
         }
         if (!parsed.toString().equals(raw)) {
-            throw new IllegalArgumentException("projectId must be a canonical UUID");
+            throw new IllegalArgumentException(name + " must be a canonical UUID");
         }
         return parsed;
     }
