@@ -11,6 +11,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -55,6 +56,14 @@ public final class AdminKnowledgeController {
     KnowledgeResponse get(Authentication authentication, @PathVariable String projectId, @PathVariable String entryId) {
         return KnowledgeResponse.from(knowledge.get(actor(authentication), canonicalProjectId(projectId),
             canonicalEntryId(entryId)));
+    }
+
+    @PutMapping("/{entryId}")
+    KnowledgeResponse update(Authentication authentication, @PathVariable String projectId, @PathVariable String entryId,
+                             @RequestBody UpdateKnowledgeRequest request) {
+        if (request == null) throw new IllegalArgumentException("knowledge request is required");
+        return KnowledgeResponse.from(knowledge.update(actor(authentication), canonicalProjectId(projectId), canonicalEntryId(entryId),
+            request.requiredQuestion(), request.requiredAnswer(), request.externalId, request.requiredActive(), request.requiredVersion()));
     }
 
     private static UUID canonicalProjectId(String raw) {
@@ -131,6 +140,24 @@ public final class AdminKnowledgeController {
         }
     }
 
+    static final class UpdateKnowledgeRequest {
+        private String question, answer, externalId;
+        private Boolean active;
+        private Long version;
+        private boolean questionSeen, answerSeen, externalIdSeen, activeSeen, versionSeen;
+        @JsonProperty("question") public void setQuestion(String value) { duplicate(questionSeen, "question"); questionSeen = true; question = value; }
+        @JsonProperty("answer") public void setAnswer(String value) { duplicate(answerSeen, "answer"); answerSeen = true; answer = value; }
+        @JsonProperty("externalId") public void setExternalId(String value) { duplicate(externalIdSeen, "externalId"); externalIdSeen = true; externalId = value; }
+        @JsonProperty("active") public void setActive(Boolean value) { duplicate(activeSeen, "active"); activeSeen = true; active = value; }
+        @JsonProperty("version") public void setVersion(Long value) { duplicate(versionSeen, "version"); versionSeen = true; version = value; }
+        @JsonAnySetter public void rejectUnknown(String property, Object ignored) { throw new IllegalArgumentException("unknown knowledge property: " + property); }
+        String requiredQuestion() { if (!questionSeen || question == null) throw new IllegalArgumentException("question is required"); return question; }
+        String requiredAnswer() { if (!answerSeen || answer == null) throw new IllegalArgumentException("answer is required"); return answer; }
+        boolean requiredActive() { if (!activeSeen || active == null) throw new IllegalArgumentException("active is required"); return active.booleanValue(); }
+        long requiredVersion() { if (!versionSeen || version == null) throw new IllegalArgumentException("version is required"); return version.longValue(); }
+        private static void duplicate(boolean seen, String property) { if (seen) throw new IllegalArgumentException("duplicate knowledge property: " + property); }
+    }
+
     static final class KnowledgeResponse {
         private final UUID id;
         private final UUID projectId;
@@ -140,11 +167,12 @@ public final class AdminKnowledgeController {
         private final boolean active;
         private final String embeddingStatus;
         private final long embeddingRevision;
+        private final long version;
         private final Instant createdAt;
         private final Instant updatedAt;
 
         private KnowledgeResponse(UUID id, UUID projectId, String question, String answer, String externalId,
-                                  boolean active, String embeddingStatus, long embeddingRevision,
+                                  boolean active, String embeddingStatus, long embeddingRevision, long version,
                                   Instant createdAt, Instant updatedAt) {
             this.id = id;
             this.projectId = projectId;
@@ -154,6 +182,7 @@ public final class AdminKnowledgeController {
             this.active = active;
             this.embeddingStatus = embeddingStatus;
             this.embeddingRevision = embeddingRevision;
+            this.version = version;
             this.createdAt = createdAt;
             this.updatedAt = updatedAt;
         }
@@ -161,7 +190,7 @@ public final class AdminKnowledgeController {
         static KnowledgeResponse from(ManagedKnowledgeEntry entry) {
             return new KnowledgeResponse(entry.getId(), entry.getProjectId(), entry.getQuestion(), entry.getAnswer(),
                 entry.getExternalId(), entry.isActive(), entry.getEmbeddingStatus(), entry.getEmbeddingRevision(),
-                entry.getCreatedAt(), entry.getUpdatedAt());
+                entry.getVersion(), entry.getCreatedAt(), entry.getUpdatedAt());
         }
 
         public UUID getId() { return id; }
@@ -172,6 +201,7 @@ public final class AdminKnowledgeController {
         public boolean isActive() { return active; }
         public String getEmbeddingStatus() { return embeddingStatus; }
         public long getEmbeddingRevision() { return embeddingRevision; }
+        public long getVersion() { return version; }
         public Instant getCreatedAt() { return createdAt; }
         public Instant getUpdatedAt() { return updatedAt; }
     }

@@ -12,11 +12,12 @@ public final class ManagedKnowledgeEntry {
     private final boolean active;
     private final String embeddingStatus;
     private final long embeddingRevision;
+    private final long version;
     private final Instant createdAt;
     private final Instant updatedAt;
 
     public ManagedKnowledgeEntry(UUID id, UUID projectId, String question, String answer, String externalId,
-                                 boolean active, String embeddingStatus, long embeddingRevision,
+                                 boolean active, String embeddingStatus, long embeddingRevision, long version,
                                  Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.projectId = projectId;
@@ -26,6 +27,7 @@ public final class ManagedKnowledgeEntry {
         this.active = active;
         this.embeddingStatus = embeddingStatus;
         this.embeddingRevision = embeddingRevision;
+        this.version = version;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -38,6 +40,7 @@ public final class ManagedKnowledgeEntry {
     public boolean isActive() { return active; }
     public String getEmbeddingStatus() { return embeddingStatus; }
     public long getEmbeddingRevision() { return embeddingRevision; }
+    public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

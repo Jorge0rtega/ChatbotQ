@@ -12,5 +12,8 @@ public interface KnowledgeAdministrationPort {
 
     ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId);
 
+    ManagedKnowledgeEntry update(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
+                                 String externalId, boolean active, long version, Instant now);
+
     ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size, long offset);
 }

@@ -36,6 +36,14 @@ public final class AdministerKnowledgeUseCase {
             require(entryId, "entryId"));
     }
 
+    public ManagedKnowledgeEntry update(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
+                                        String externalId, boolean active, long version) {
+        if (version < 0) throw new IllegalArgumentException("version must be non-negative");
+        return entries.update(require(actorId, "actorId"), require(projectId, "projectId"), require(entryId, "entryId"),
+            normalize(question, "question", 2000, false), normalize(answer, "answer", 8000, false),
+            normalize(externalId, "externalId", 255, true), active, version, clock.instant());
+    }
+
     public ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size) {
         require(actorId, "actorId");
         require(projectId, "projectId");
