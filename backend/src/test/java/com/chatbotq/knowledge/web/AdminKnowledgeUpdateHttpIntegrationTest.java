@@ -68,6 +68,70 @@ class AdminKnowledgeUpdateHttpIntegrationTest {
         jdbc.update("insert into user_project_role (user_id,project_id,role) values (?,?,'PROJECT_ADMIN')", projectAdmin.getId(), projectId);
     }
 
+    @Test void failedEntryCanBeRequeuedWithoutChangingFailureDiagnostics() throws Exception {
+        String token = login("general-update@example.com");
+        JsonNode entry = create(token, projectId, "Question", "Answer", null, true);
+        UUID id = UUID.fromString(entry.get("id").asText());
+        jdbc.update("update knowledge_entry set embedding_status='FAILED',embedding_attempt_count=3,embedding_last_attempt_at=?,embedding_last_error_code='TRANSIENT',embedding_last_error_message='retry me',version=4 where id=?",
+            java.sql.Timestamp.from(java.time.Instant.parse("2025-01-02T03:04:05Z")), id);
+
+        mvc.perform(post(path(projectId, id) + "/embedding-retry").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":4}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.embeddingStatus").value("PENDING"))
+            .andExpect(jsonPath("$.version").value(5)).andExpect(jsonPath("$.embeddingAttemptCount").value(3))
+            .andExpect(jsonPath("$.embeddingLastAttemptAt").value("2025-01-02T03:04:05Z"))
+            .andExpect(jsonPath("$.embeddingLastErrorCode").value("TRANSIENT"))
+            .andExpect(jsonPath("$.embeddingLastErrorMessage").value("retry me"));
+        Map<String,Object> row = jdbc.queryForMap("select embedding_status,version,embedding_attempt_count,embedding_last_error_code,embedding_last_error_message from knowledge_entry where id=?", id);
+        assertEquals("PENDING", row.get("embedding_status")); assertEquals(5L, ((Number) row.get("version")).longValue());
+        assertEquals(3, ((Number) row.get("embedding_attempt_count")).intValue()); assertEquals("TRANSIENT", row.get("embedding_last_error_code")); assertEquals("retry me", row.get("embedding_last_error_message"));
+    }
+
+    @Test void retryRejectsInvalidBodiesStaleVersionsAndNonFailedStatesWithoutWrite() throws Exception {
+        String token = login("general-update@example.com");
+        JsonNode entry = create(token, projectId, "Question", "Answer", null, true);
+        UUID id = UUID.fromString(entry.get("id").asText());
+        String endpoint = path(projectId, id) + "/embedding-retry";
+        String[] invalid = { "null", "{}", "{\"version\":null}", "{\"version\":-1}",
+            "{\"version\":0,\"version\":0}", "{\"version\":0,\"unknown\":true}" };
+        for (String body : invalid) mvc.perform(post(endpoint).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("invalid_request"));
+        mvc.perform(post(endpoint).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("knowledge_retry_not_allowed"));
+        jdbc.update("update knowledge_entry set embedding_status='FAILED',version=4 where id=?", id);
+        mvc.perform(post(endpoint).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":3}"))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("knowledge_version_conflict"));
+        Map<String,Object> row = jdbc.queryForMap("select embedding_status,version from knowledge_entry where id=?", id);
+        assertEquals("FAILED", row.get("embedding_status"));
+        assertEquals(4L, ((Number) row.get("version")).longValue());
+    }
+
+    @Test void retryKeepsAuthorizationAndNotFoundPrecedenceWithoutEntryLeak() throws Exception {
+        String general = login("general-update@example.com");
+        JsonNode entry = create(general, projectId, "Question", "Answer", null, true);
+        UUID id = UUID.fromString(entry.get("id").asText());
+        jdbc.update("update knowledge_entry set embedding_status='FAILED' where id=?", id);
+        String project = login("project-update@example.com");
+        mvc.perform(post(path(otherProjectId, id) + "/embedding-retry").header("Authorization", "Bearer " + general)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+            .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("knowledge_entry_not_found"));
+        mvc.perform(post(path(otherProjectId, id) + "/embedding-retry").header("Authorization", "Bearer " + project)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+        jdbc.update("delete from user_project_role where user_id=? and project_id=?", projectAdmin.getId(), projectId);
+        mvc.perform(post(path(projectId, id) + "/embedding-retry").header("Authorization", "Bearer " + project)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+        jdbc.update("update project set status='DISABLED' where id=?", projectId);
+        mvc.perform(post(path(projectId, id) + "/embedding-retry").header("Authorization", "Bearer " + general)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+        assertEquals("FAILED", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, id));
+    }
+
     @Test void authorizedUpdateReturnsVersionAndQuestionInvalidatesOnlyEmbeddingLifecycle() throws Exception {
         String token = login("general-update@example.com"); JsonNode entry = create(token, projectId, "Question", "Answer", "external", true); UUID id = UUID.fromString(entry.get("id").asText());
         setReady(id, 7);

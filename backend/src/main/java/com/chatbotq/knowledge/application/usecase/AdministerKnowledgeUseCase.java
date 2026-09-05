@@ -44,6 +44,12 @@ public final class AdministerKnowledgeUseCase {
             normalize(externalId, "externalId", 255, true), active, version, clock.instant());
     }
 
+    public ManagedKnowledgeEntry retryEmbedding(UUID actorId, UUID projectId, UUID entryId, long version) {
+        if (version < 0) throw new IllegalArgumentException("version must be non-negative");
+        return entries.retryEmbedding(require(actorId, "actorId"), require(projectId, "projectId"),
+            require(entryId, "entryId"), version, clock.instant());
+    }
+
     public ManagedKnowledgeEntryPage list(UUID actorId, UUID projectId, String query, int page, int size) {
         require(actorId, "actorId");
         require(projectId, "projectId");

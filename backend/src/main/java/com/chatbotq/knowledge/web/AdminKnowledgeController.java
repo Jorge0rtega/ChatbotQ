@@ -66,6 +66,14 @@ public final class AdminKnowledgeController {
             request.requiredQuestion(), request.requiredAnswer(), request.externalId, request.requiredActive(), request.requiredVersion()));
     }
 
+    @PostMapping("/{entryId}/embedding-retry")
+    KnowledgeResponse retryEmbedding(Authentication authentication, @PathVariable String projectId, @PathVariable String entryId,
+                                    @RequestBody RetryEmbeddingRequest request) {
+        if (request == null) throw new IllegalArgumentException("retry request is required");
+        return KnowledgeResponse.from(knowledge.retryEmbedding(actor(authentication), canonicalProjectId(projectId),
+            canonicalEntryId(entryId), request.requiredVersion()));
+    }
+
     private static UUID canonicalProjectId(String raw) {
         return canonicalUuid(raw, "projectId");
     }
@@ -158,6 +166,14 @@ public final class AdminKnowledgeController {
         private static void duplicate(boolean seen, String property) { if (seen) throw new IllegalArgumentException("duplicate knowledge property: " + property); }
     }
 
+    static final class RetryEmbeddingRequest {
+        private Long version;
+        private boolean versionSeen;
+        @JsonProperty("version") public void setVersion(Long value) { if (versionSeen) throw new IllegalArgumentException("duplicate retry property: version"); versionSeen = true; version = value; }
+        @JsonAnySetter public void rejectUnknown(String property, Object ignored) { throw new IllegalArgumentException("unknown retry property: " + property); }
+        long requiredVersion() { if (!versionSeen || version == null) throw new IllegalArgumentException("version is required"); return version.longValue(); }
+    }
+
     static final class KnowledgeResponse {
         private final UUID id;
         private final UUID projectId;
@@ -167,12 +183,18 @@ public final class AdminKnowledgeController {
         private final boolean active;
         private final String embeddingStatus;
         private final long embeddingRevision;
+        private final int embeddingAttemptCount;
+        private final Instant embeddingLastAttemptAt;
+        private final String embeddingLastErrorCode;
+        private final String embeddingLastErrorMessage;
         private final long version;
         private final Instant createdAt;
         private final Instant updatedAt;
 
         private KnowledgeResponse(UUID id, UUID projectId, String question, String answer, String externalId,
-                                  boolean active, String embeddingStatus, long embeddingRevision, long version,
+                                  boolean active, String embeddingStatus, long embeddingRevision, int embeddingAttemptCount,
+                                  Instant embeddingLastAttemptAt, String embeddingLastErrorCode,
+                                  String embeddingLastErrorMessage, long version,
                                   Instant createdAt, Instant updatedAt) {
             this.id = id;
             this.projectId = projectId;
@@ -182,6 +204,10 @@ public final class AdminKnowledgeController {
             this.active = active;
             this.embeddingStatus = embeddingStatus;
             this.embeddingRevision = embeddingRevision;
+            this.embeddingAttemptCount = embeddingAttemptCount;
+            this.embeddingLastAttemptAt = embeddingLastAttemptAt;
+            this.embeddingLastErrorCode = embeddingLastErrorCode;
+            this.embeddingLastErrorMessage = embeddingLastErrorMessage;
             this.version = version;
             this.createdAt = createdAt;
             this.updatedAt = updatedAt;
@@ -190,7 +216,8 @@ public final class AdminKnowledgeController {
         static KnowledgeResponse from(ManagedKnowledgeEntry entry) {
             return new KnowledgeResponse(entry.getId(), entry.getProjectId(), entry.getQuestion(), entry.getAnswer(),
                 entry.getExternalId(), entry.isActive(), entry.getEmbeddingStatus(), entry.getEmbeddingRevision(),
-                entry.getVersion(), entry.getCreatedAt(), entry.getUpdatedAt());
+                entry.getEmbeddingAttemptCount(), entry.getEmbeddingLastAttemptAt(), entry.getEmbeddingLastErrorCode(),
+                entry.getEmbeddingLastErrorMessage(), entry.getVersion(), entry.getCreatedAt(), entry.getUpdatedAt());
         }
 
         public UUID getId() { return id; }
@@ -201,6 +228,10 @@ public final class AdminKnowledgeController {
         public boolean isActive() { return active; }
         public String getEmbeddingStatus() { return embeddingStatus; }
         public long getEmbeddingRevision() { return embeddingRevision; }
+        public int getEmbeddingAttemptCount() { return embeddingAttemptCount; }
+        public Instant getEmbeddingLastAttemptAt() { return embeddingLastAttemptAt; }
+        public String getEmbeddingLastErrorCode() { return embeddingLastErrorCode; }
+        public String getEmbeddingLastErrorMessage() { return embeddingLastErrorMessage; }
         public long getVersion() { return version; }
         public Instant getCreatedAt() { return createdAt; }
         public Instant getUpdatedAt() { return updatedAt; }

@@ -278,6 +278,30 @@ class AdminKnowledgeHttpIntegrationTest {
     }
 
     @Test
+    void getAndListExposeNonSecretEmbeddingFailureDiagnostics() throws Exception {
+        String token = login("general-knowledge@example.com");
+        JsonNode created = createKnowledge(token, projectId, "Question", "Answer", "external-id", true);
+        UUID entryId = UUID.fromString(created.get("id").asText());
+        jdbc.update("update knowledge_entry set embedding_status='FAILED',embedding_attempt_count=4,"
+                + "embedding_last_attempt_at=?,embedding_last_error_code='TRANSIENT',"
+                + "embedding_last_error_message='provider timed out' where id=?",
+            java.sql.Timestamp.from(java.time.Instant.parse("2025-01-02T03:04:05Z")), entryId);
+
+        mvc.perform(get(knowledgePath(projectId, entryId)).header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.embeddingAttemptCount").value(4))
+            .andExpect(jsonPath("$.embeddingLastAttemptAt").value("2025-01-02T03:04:05Z"))
+            .andExpect(jsonPath("$.embeddingLastErrorCode").value("TRANSIENT"))
+            .andExpect(jsonPath("$.embeddingLastErrorMessage").value("provider timed out"));
+        mvc.perform(get(knowledgeListPath(projectId)).header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items[0].embeddingAttemptCount").value(4))
+            .andExpect(jsonPath("$.items[0].embeddingLastAttemptAt").value("2025-01-02T03:04:05Z"))
+            .andExpect(jsonPath("$.items[0].embeddingLastErrorCode").value("TRANSIENT"))
+            .andExpect(jsonPath("$.items[0].embeddingLastErrorMessage").value("provider timed out"));
+    }
+
+    @Test
     void generalAdminReadsExistingKnowledgeWithAllPublicLifecycleFields() throws Exception {
         String token = login("general-knowledge@example.com");
         JsonNode created = createKnowledge(token, projectId, "Question", "Answer", "external-id", false);
