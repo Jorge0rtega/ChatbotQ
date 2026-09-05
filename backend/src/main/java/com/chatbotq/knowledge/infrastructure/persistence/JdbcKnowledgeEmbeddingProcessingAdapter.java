@@ -30,4 +30,35 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
                 rs.getLong("embedding_revision"), rs.getString("question")));
         return claims.isEmpty() ? Optional.empty() : Optional.of(claims.get(0));
     }
+
+    @Override
+    @Transactional
+    public boolean markReady(ClaimedKnowledgeEmbedding claim, float[] embedding) {
+        if (claim == null) throw new IllegalArgumentException("claim must not be null");
+        validateEmbedding(embedding);
+        return jdbc.update("update knowledge_entry set embedding_status='READY',embedding=cast(? as vector),"
+                + "embedded_at=current_timestamp,embedding_last_error_code=null,embedding_last_error_message=null,"
+                + "updated_at=current_timestamp where id=? and embedding_revision=? and embedding_status='PROCESSING'",
+            toVector(embedding), claim.getEntryId(), claim.getEmbeddingRevision()) == 1;
+    }
+
+    private static void validateEmbedding(float[] embedding) {
+        if (embedding == null || embedding.length != 1536) {
+            throw new IllegalArgumentException("embedding must contain exactly 1536 dimensions");
+        }
+        for (float value : embedding) {
+            if (Float.isNaN(value) || Float.isInfinite(value)) {
+                throw new IllegalArgumentException("embedding must contain only finite values");
+            }
+        }
+    }
+
+    private static String toVector(float[] values) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int index = 0; index < values.length; index++) {
+            if (index > 0) builder.append(',');
+            builder.append(values[index]);
+        }
+        return builder.append(']').toString();
+    }
 }
