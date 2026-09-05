@@ -2,6 +2,7 @@ package com.chatbotq.rag.infrastructure.configuration;
 
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.infrastructure.provider.OpenAiEmbeddingClient;
+import com.chatbotq.rag.infrastructure.provider.RetryingEmbeddingProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -23,7 +24,13 @@ public class EmbeddingProviderConfiguration {
             @Value("${chatbotq.embedding.openai.api-key}") String apiKey,
             @Value("${chatbotq.embedding.openai.model:text-embedding-3-small}") String model,
             @Value("${chatbotq.embedding.openai.connect-timeout-ms:2000}") int connectTimeoutMs,
-            @Value("${chatbotq.embedding.openai.read-timeout-ms:10000}") int readTimeoutMs) throws IOException {
-        return new OpenAiEmbeddingClient(endpoint, apiKey, model, connectTimeoutMs, readTimeoutMs);
+            @Value("${chatbotq.embedding.openai.read-timeout-ms:10000}") int readTimeoutMs,
+            @Value("${chatbotq.embedding.openai.retry.max-attempts:3}") int retryMaxAttempts,
+            @Value("${chatbotq.embedding.openai.retry.initial-backoff-ms:100}") long retryInitialBackoffMs,
+            @Value("${chatbotq.embedding.openai.retry.max-backoff-ms:1000}") long retryMaxBackoffMs) throws IOException {
+        OpenAiEmbeddingClient client = new OpenAiEmbeddingClient(
+            endpoint, apiKey, model, connectTimeoutMs, readTimeoutMs);
+        return new RetryingEmbeddingProvider(
+            client, Thread::sleep, retryMaxAttempts, retryInitialBackoffMs, retryMaxBackoffMs);
     }
 }

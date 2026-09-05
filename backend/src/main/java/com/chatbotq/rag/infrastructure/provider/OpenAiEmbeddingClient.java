@@ -9,7 +9,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -46,6 +45,7 @@ public final class OpenAiEmbeddingClient implements EmbeddingProvider {
         HttpURLConnection connection = (HttpURLConnection) endpoint.openConnection();
         try {
             connection.setRequestMethod("POST");
+            connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(connectTimeoutMs);
             connection.setReadTimeout(readTimeoutMs);
             connection.setDoOutput(true);
@@ -63,8 +63,7 @@ public final class OpenAiEmbeddingClient implements EmbeddingProvider {
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
-                throw new IOException("OpenAI embeddings returned HTTP " + status + ": "
-                    + readBody(connection.getErrorStream()));
+                throw new OpenAiEmbeddingHttpException(status);
             }
 
             try (InputStream response = connection.getInputStream()) {
@@ -90,15 +89,6 @@ public final class OpenAiEmbeddingClient implements EmbeddingProvider {
             }
         } finally {
             connection.disconnect();
-        }
-    }
-
-    private static String readBody(InputStream stream) throws IOException {
-        if (stream == null) {
-            return "";
-        }
-        try (InputStream input = stream) {
-            return new String(org.springframework.util.StreamUtils.copyToByteArray(input), StandardCharsets.UTF_8);
         }
     }
 

@@ -14,10 +14,12 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +55,42 @@ class OpenAiEmbeddingClientTest {
         assertEquals("Bearer test-key", authorization.get());
         assertTrue(requestBody.get().contains("\"model\":\"text-embedding-3-small\""));
         assertTrue(requestBody.get().contains("¿Cuál es el horario?"));
+    }
+
+    @Test
+    void rejectsRedirectWithoutFollowingIt() throws Exception {
+        AtomicInteger redirectedRequests = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/embeddings", exchange -> {
+            exchange.getResponseHeaders().set("Location", "/redirected");
+            respond(exchange, 302, "redirect");
+        });
+        server.createContext("/redirected", exchange -> {
+            redirectedRequests.incrementAndGet();
+            respond(exchange, 200, embeddingResponse(1536));
+        });
+        server.start();
+
+        OpenAiEmbeddingHttpException failure = assertThrows(
+            OpenAiEmbeddingHttpException.class, () -> client(1000).embed("redirect"));
+
+        assertEquals(302, failure.getStatusCode());
+        assertEquals(0, redirectedRequests.get());
+    }
+
+    @Test
+    void exposesOnlyStatusForNonSuccessfulResponses() throws Exception {
+        String sensitiveErrorBody = "api-error: [REDACTED]";
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/embeddings", exchange -> respond(exchange, 429, sensitiveErrorBody));
+        server.start();
+
+        OpenAiEmbeddingHttpException failure = assertThrows(
+            OpenAiEmbeddingHttpException.class, () -> client(1000).embed("rate limited"));
+
+        assertEquals(429, failure.getStatusCode());
+        assertTrue(failure.getMessage().contains("429"));
+        assertFalse(failure.getMessage().contains(sensitiveErrorBody));
     }
 
     @Test
