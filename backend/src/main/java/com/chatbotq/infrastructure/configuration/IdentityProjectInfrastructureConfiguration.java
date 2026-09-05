@@ -27,9 +27,11 @@ import com.chatbotq.infrastructure.identity.UuidAdminUserIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidKnowledgeEntryIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
+import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
@@ -72,6 +74,11 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     KnowledgeAdministrationPort knowledgeAdministrationPort(JdbcTemplate jdbc) {
         return new JdbcKnowledgeAdministrationAdapter(jdbc);
+    }
+
+    @Bean
+    KnowledgeEmbeddingProcessingPort knowledgeEmbeddingProcessingPort(JdbcTemplate jdbc) {
+        return new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc);
     }
 
     @Bean

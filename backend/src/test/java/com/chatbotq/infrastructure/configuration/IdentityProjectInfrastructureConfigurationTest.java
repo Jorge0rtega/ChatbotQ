@@ -4,6 +4,7 @@ import com.chatbotq.ChatbotQApplication;
 import com.chatbotq.identityaccess.application.usecase.AdministerUserProjectAssignmentsUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
 import com.chatbotq.identityaccess.domain.AdminUser;
+import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 
 import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
 import com.chatbotq.projects.application.usecase.CreateProjectUseCase;
@@ -61,6 +62,9 @@ class IdentityProjectInfrastructureConfigurationTest {
     private AdministerUserProjectAssignmentsUseCase assignments;
 
     @Autowired
+    private KnowledgeEmbeddingProcessingPort embeddingProcessing;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @Test
@@ -77,6 +81,7 @@ class IdentityProjectInfrastructureConfigurationTest {
             java.util.Collections.singletonList(project.getId()));
 
         assertTrue(user.getPasswordHash().startsWith("$2"));
+        assertTrue(embeddingProcessing.getClass().getName().contains("JdbcKnowledgeEmbeddingProcessingAdapter"));
         assertEquals(1, jdbc.queryForObject(
             "select count(*) from project where id = ?", Integer.class, project.getId()));
         assertEquals("https://example.com", jdbc.queryForObject(
