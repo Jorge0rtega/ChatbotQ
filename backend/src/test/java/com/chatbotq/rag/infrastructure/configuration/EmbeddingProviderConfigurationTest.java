@@ -5,6 +5,8 @@ import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.infrastructure.provider.RetryingEmbeddingProvider;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -22,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EmbeddingProviderConfigurationTest {
     private final ApplicationContextRunner context = new ApplicationContextRunner()
+        .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
         .withUserConfiguration(EmbeddingProviderConfiguration.class);
 
     @Test

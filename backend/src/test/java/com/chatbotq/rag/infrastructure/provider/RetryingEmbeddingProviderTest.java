@@ -1,6 +1,7 @@
 package com.chatbotq.rag.infrastructure.provider;
 
 import com.chatbotq.rag.application.port.EmbeddingProvider;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -36,6 +37,19 @@ class RetryingEmbeddingProviderTest {
         assertArrayEquals(vector(), provider.embed("hours"));
         assertEquals(2, delegate.calls);
         assertEquals(Arrays.asList(10L), sleeper.delays);
+    }
+
+    @Test
+    void recordsOnlyBoundedRetryDiagnosticsAndLatency() throws Exception {
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+        RecordingProvider delegate = new RecordingProvider(new OpenAiEmbeddingHttpException(429), vector());
+        RetryingEmbeddingProvider provider = new RetryingEmbeddingProvider(
+            delegate, new RecordingSleeper(), metrics, 2, 1L, 1L);
+
+        assertArrayEquals(vector(), provider.embed("hours"));
+        assertEquals(1.0, metrics.counter("chatbotq.embedding.retry.attempts", "category", "rate_limited").count());
+        assertEquals(1.0, metrics.counter("chatbotq.embedding.requests", "outcome", "success").count());
+        assertTrue(metrics.find("chatbotq.embedding.duration").timer() != null);
     }
 
     @Test
