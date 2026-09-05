@@ -25,13 +25,18 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
     public Optional<ClaimedKnowledgeEmbedding> claimOnePending() {
         List<ClaimedKnowledgeEmbedding> claims = jdbc.query(
             "with candidate as materialized (select id from knowledge_entry where embedding_status='PENDING' "
+                + "or (embedding_status='PROCESSING' and embedding_processing_lease_expires_at<=clock_timestamp()) "
                 + "order by updated_at,id for update skip locked limit 1), claimed as (update knowledge_entry e "
-                + "set embedding_status='PROCESSING',embedding_attempt_count=e.embedding_attempt_count+1,"
-                + "embedding_last_attempt_at=current_timestamp from candidate c where e.id=c.id "
-                + "and e.embedding_status='PENDING' returning e.id,e.embedding_revision,e.question) "
-                + "select id,embedding_revision,question from claimed",
+                + "set embedding_status='PROCESSING',embedding_processing_claim_token=gen_random_uuid(),"
+                + "embedding_processing_lease_expires_at=clock_timestamp()+interval '5 minutes',"
+                + "embedding_attempt_count=e.embedding_attempt_count+1,embedding_last_attempt_at=clock_timestamp() "
+                + "from candidate c where e.id=c.id and (e.embedding_status='PENDING' or "
+                + "(e.embedding_status='PROCESSING' and e.embedding_processing_lease_expires_at<=clock_timestamp())) "
+                + "returning e.id,e.embedding_revision,e.question,e.embedding_processing_claim_token) "
+                + "select id,embedding_revision,question,embedding_processing_claim_token from claimed",
             (rs, rowNum) -> new ClaimedKnowledgeEmbedding(rs.getObject("id", java.util.UUID.class),
-                rs.getLong("embedding_revision"), rs.getString("question")));
+                rs.getLong("embedding_revision"), rs.getString("question"),
+                rs.getObject("embedding_processing_claim_token", java.util.UUID.class)));
         return claims.isEmpty() ? Optional.empty() : Optional.of(claims.get(0));
     }
 
@@ -41,9 +46,11 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
         if (claim == null) throw new IllegalArgumentException("claim must not be null");
         validateEmbedding(embedding);
         return jdbc.update("update knowledge_entry set embedding_status='READY',embedding=cast(? as vector),"
-                + "embedded_at=current_timestamp,embedding_last_error_code=null,embedding_last_error_message=null,"
-                + "updated_at=current_timestamp where id=? and embedding_revision=? and embedding_status='PROCESSING'",
-            toVector(embedding), claim.getEntryId(), claim.getEmbeddingRevision()) == 1;
+                + "embedded_at=current_timestamp,embedding_processing_claim_token=null,"
+                + "embedding_processing_lease_expires_at=null,embedding_last_error_code=null,embedding_last_error_message=null,"
+                + "updated_at=current_timestamp where id=? and embedding_revision=? and embedding_status='PROCESSING' "
+                + "and embedding_processing_claim_token=? and embedding_processing_lease_expires_at>clock_timestamp()",
+            toVector(embedding), claim.getEntryId(), claim.getEmbeddingRevision(), claim.getClaimToken()) == 1;
     }
 
     @Override
@@ -52,9 +59,11 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
         if (claim == null) throw new IllegalArgumentException("claim must not be null");
         validateSafeError(errorCode, errorMessage);
         return jdbc.update("update knowledge_entry set embedding_status='FAILED',embedding=null,embedded_at=null,"
+                + "embedding_processing_claim_token=null,embedding_processing_lease_expires_at=null,"
                 + "embedding_last_error_code=?,embedding_last_error_message=?,updated_at=current_timestamp "
-                + "where id=? and embedding_revision=? and embedding_status='PROCESSING'",
-            errorCode, errorMessage, claim.getEntryId(), claim.getEmbeddingRevision()) == 1;
+                + "where id=? and embedding_revision=? and embedding_status='PROCESSING' and embedding_processing_claim_token=? "
+                + "and embedding_processing_lease_expires_at>clock_timestamp()",
+            errorCode, errorMessage, claim.getEntryId(), claim.getEmbeddingRevision(), claim.getClaimToken()) == 1;
     }
 
     private static void validateSafeError(String errorCode, String errorMessage) {

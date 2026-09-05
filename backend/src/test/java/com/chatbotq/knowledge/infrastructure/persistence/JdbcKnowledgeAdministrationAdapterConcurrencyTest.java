@@ -80,6 +80,22 @@ class JdbcKnowledgeAdministrationAdapterConcurrencyTest {
     }
 
     @Test
+    void changingQuestionClearsTheProcessingLeaseThroughTheAdministrationAdapter() {
+        UUID token = UUID.randomUUID();
+        jdbc.update("update knowledge_entry set embedding_status='PROCESSING',embedding_processing_claim_token=?,"
+                + "embedding_processing_lease_expires_at=clock_timestamp()+interval '5 minutes' where id=?",
+            token, entry);
+
+        ManagedKnowledgeEntry updated = knowledge.update(general, project, entry, "Changed question", "Answer", "external", true,
+            0, Instant.parse("2026-09-05T12:00:00Z"));
+
+        assertEquals("Changed question", updated.getQuestion());
+        assertEquals("PENDING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entry));
+        assertEquals(null, jdbc.queryForObject("select embedding_processing_claim_token from knowledge_entry where id=?", UUID.class, entry));
+        assertEquals(null, jdbc.queryForObject("select embedding_processing_lease_expires_at from knowledge_entry where id=?", Object.class, entry));
+    }
+
+    @Test
     void statusProjectAndAssignmentRevocationCannotCommitBetweenAuthorizationAndKnowledgeUpdate() throws Exception {
         assertRevocationWaitsForAuthorizedUpdate(new Revocation() {
             @Override public void revoke() {

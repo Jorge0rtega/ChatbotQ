@@ -8,7 +8,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -27,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcKnowledgeEmbeddingProcessingAdapterTest {
     private static PostgreSQLContainer<?> postgres;
+    private static DriverManagerDataSource dataSource;
     private static JdbcTemplate jdbc;
     private KnowledgeEmbeddingProcessingPort processing;
 
@@ -37,8 +40,8 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         postgres.start();
         Flyway.configure().dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
             .locations("classpath:db/migration").load().migrate();
-        jdbc = new JdbcTemplate(new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(),
-            postgres.getPassword()));
+        dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        jdbc = new JdbcTemplate(dataSource);
     }
 
     @AfterAll
@@ -106,7 +109,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         UUID entryId = pending("Original question", Instant.parse("2026-09-04T12:00:00Z"));
         ClaimedKnowledgeEmbedding oldClaim = processing.claimOnePending().get();
         jdbc.update("update knowledge_entry set question='Updated question',embedding_status='PENDING',embedding_revision=2,"
-            + "embedding_attempt_count=0,embedding_last_attempt_at=null,embedding_last_error_code=null,embedding_last_error_message=null where id=?", entryId);
+            + "embedding_processing_claim_token=null,embedding_processing_lease_expires_at=null,embedding_attempt_count=0,embedding_last_attempt_at=null,embedding_last_error_code=null,embedding_last_error_message=null where id=?", entryId);
 
         assertFalse(processing.markFailed(oldClaim, "PROVIDER_TRANSIENT", "Embedding provider temporarily unavailable"));
 
@@ -134,7 +137,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         UUID entryId = pending("Original question", Instant.parse("2026-09-04T12:00:00Z"));
         ClaimedKnowledgeEmbedding oldClaim = processing.claimOnePending().get();
         jdbc.update("update knowledge_entry set question='Updated question',embedding_status='PENDING',embedding_revision=2,"
-            + "embedding_attempt_count=0,embedding_last_attempt_at=null,embedding_last_error_code=null,embedding_last_error_message=null where id=?", entryId);
+            + "embedding_processing_claim_token=null,embedding_processing_lease_expires_at=null,embedding_attempt_count=0,embedding_last_attempt_at=null,embedding_last_error_code=null,embedding_last_error_message=null where id=?", entryId);
 
         assertFalse(processing.markReady(oldClaim, vector()));
 
@@ -158,6 +161,56 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         assertThrows(IllegalArgumentException.class, () -> processing.markReady(finalClaim, new float[1535]));
         assertThrows(IllegalArgumentException.class, () -> processing.markReady(finalClaim, nonFinite));
         assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, claim.getEntryId()));
+    }
+
+    @Test
+    void expiredLeaseCannotBeCompletedBeforeItIsReclaimed() {
+        UUID entryId = pending("Expired ownership question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding expired = processing.claimOnePending().get();
+        jdbc.update("update knowledge_entry set embedding_processing_lease_expires_at=current_timestamp-interval '1 second' where id=?", entryId);
+
+        assertFalse(processing.markReady(expired, vector()));
+        assertFalse(processing.markFailed(expired, "PROVIDER_FAILURE", "Embedding generation failed"));
+        assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+    }
+
+    @Test
+    void cannotCompleteALeaseThatExpiresAfterAnOuterTransactionStarts() {
+        UUID entryId = pending("Transaction timestamp question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding claim = processing.claimOnePending().get();
+        TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+
+        Boolean completed = transaction.execute(status -> {
+            jdbc.queryForObject("select current_timestamp", java.sql.Timestamp.class);
+            try {
+                Thread.sleep(1100L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+            jdbc.update("update knowledge_entry set embedding_processing_lease_expires_at=clock_timestamp()-interval '100 milliseconds' where id=?", entryId);
+            return processing.markReady(claim, vector());
+        });
+
+        assertFalse(completed.booleanValue());
+        assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+    }
+
+    @Test
+    void expiredProcessingLeaseIsReclaimedWithNewTokenAndOldWorkerCannotFinish() {
+        UUID entryId = pending("Recoverable question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding abandoned = processing.claimOnePending().get();
+        jdbc.update("update knowledge_entry set embedding_processing_lease_expires_at=current_timestamp-interval '1 second' where id=?", entryId);
+
+        ClaimedKnowledgeEmbedding reclaimed = processing.claimOnePending().get();
+
+        assertEquals(abandoned.getEntryId(), reclaimed.getEntryId());
+        assertEquals(abandoned.getEmbeddingRevision(), reclaimed.getEmbeddingRevision());
+        assertFalse(abandoned.getClaimToken().equals(reclaimed.getClaimToken()));
+        assertFalse(processing.markFailed(abandoned, "PROVIDER_FAILURE", "Embedding generation failed"));
+        assertTrue(processing.markReady(reclaimed, vector()));
+        assertEquals("READY", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(2, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
     }
 
     @Test

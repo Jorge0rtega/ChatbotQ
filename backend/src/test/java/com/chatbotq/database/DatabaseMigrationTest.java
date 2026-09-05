@@ -45,7 +45,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(9, result.migrationsExecuted);
+        assertEquals(10, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -109,7 +109,7 @@ class DatabaseMigrationTest {
         Flyway flyway = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).createSchemas(true).locations("classpath:db/migration").load();
-        assertEquals(9, flyway.migrate().migrationsExecuted);
+        assertEquals(10, flyway.migrate().migrationsExecuted);
 
         String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -134,9 +134,58 @@ class DatabaseMigrationTest {
         }
     }
 
+    @Test
+    void upgradesAProcessingV009EntryToPendingWithoutLeaseOwnership() throws Exception {
+        String schema = "processing_lease_upgrade";
+        installExtensionsInPublicSchema();
+        Flyway before = Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).createSchemas(true).locations("classpath:db/migration").target("009").load();
+        assertEquals(9, before.migrate().migrationsExecuted);
+
+        UUID projectId = UUID.randomUUID();
+        UUID entryId = UUID.randomUUID();
+        String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
+        try (Connection connection = DriverManager.getConnection(schemaUrl,
+                POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement insertProject = connection.prepareStatement(
+                 "insert into project(id,name) values (?,?)");
+             PreparedStatement insertEntry = connection.prepareStatement(
+                 "insert into knowledge_entry(id,project_id,question,answer,embedding_status) values (?,?,?,?,'PROCESSING')")) {
+            insertProject.setObject(1, projectId);
+            insertProject.setString(2, "Existing V009 processing");
+            insertProject.executeUpdate();
+            insertEntry.setObject(1, entryId);
+            insertEntry.setObject(2, projectId);
+            insertEntry.setString(3, "Question being processed before V010");
+            insertEntry.setString(4, "Answer");
+            insertEntry.executeUpdate();
+        }
+
+        Flyway upgraded = Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).locations("classpath:db/migration").load();
+        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        upgraded.validate();
+
+        try (Connection connection = DriverManager.getConnection(schemaUrl,
+                POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement query = connection.prepareStatement(
+                 "select embedding_status,embedding_processing_claim_token,embedding_processing_lease_expires_at "
+                     + "from knowledge_entry where id=?")) {
+            query.setObject(1, entryId);
+            try (ResultSet row = query.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals("PENDING", row.getString("embedding_status"));
+                assertNull(row.getObject("embedding_processing_claim_token"));
+                assertNull(row.getObject("embedding_processing_lease_expires_at"));
+            }
+        }
+    }
+
     private static void installExtensionsInPublicSchema() throws Exception {
         try (Connection connection = POSTGRES.createConnection("");
-             Statement statement = connection.createStatement()) {
+            Statement statement = connection.createStatement()) {
             statement.execute("create extension if not exists pgcrypto with schema public");
             statement.execute("create extension if not exists vector with schema public");
         }
@@ -192,7 +241,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(3, upgraded.migrate().migrationsExecuted);
+        assertEquals(4, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl,
                 POSTGRES.getUsername(), POSTGRES.getPassword());
