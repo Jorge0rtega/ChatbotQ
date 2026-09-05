@@ -5,10 +5,14 @@ import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddingProcessingPort {
+    private static final Map<String, String> SAFE_FAILURE_MESSAGES = safeFailureMessages();
     private final JdbcTemplate jdbc;
 
     public JdbcKnowledgeEmbeddingProcessingAdapter(JdbcTemplate jdbc) {
@@ -40,6 +44,34 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
                 + "embedded_at=current_timestamp,embedding_last_error_code=null,embedding_last_error_message=null,"
                 + "updated_at=current_timestamp where id=? and embedding_revision=? and embedding_status='PROCESSING'",
             toVector(embedding), claim.getEntryId(), claim.getEmbeddingRevision()) == 1;
+    }
+
+    @Override
+    @Transactional
+    public boolean markFailed(ClaimedKnowledgeEmbedding claim, String errorCode, String errorMessage) {
+        if (claim == null) throw new IllegalArgumentException("claim must not be null");
+        validateSafeError(errorCode, errorMessage);
+        return jdbc.update("update knowledge_entry set embedding_status='FAILED',embedding=null,embedded_at=null,"
+                + "embedding_last_error_code=?,embedding_last_error_message=?,updated_at=current_timestamp "
+                + "where id=? and embedding_revision=? and embedding_status='PROCESSING'",
+            errorCode, errorMessage, claim.getEntryId(), claim.getEmbeddingRevision()) == 1;
+    }
+
+    private static void validateSafeError(String errorCode, String errorMessage) {
+        String expectedMessage = SAFE_FAILURE_MESSAGES.get(errorCode);
+        if (expectedMessage == null || !expectedMessage.equals(errorMessage)) {
+            throw new IllegalArgumentException("error must be a supported safe diagnostic");
+        }
+    }
+
+    private static Map<String, String> safeFailureMessages() {
+        Map<String, String> messages = new HashMap<String, String>();
+        messages.put("PROVIDER_TRANSIENT", "Embedding provider temporarily unavailable");
+        messages.put("PROVIDER_TIMEOUT", "Embedding provider timed out");
+        messages.put("PROVIDER_UNAVAILABLE", "Embedding provider unavailable");
+        messages.put("PROVIDER_INVALID_RESPONSE", "Embedding provider returned an invalid response");
+        messages.put("PROVIDER_FAILURE", "Embedding generation failed");
+        return Collections.unmodifiableMap(messages);
     }
 
     private static void validateEmbedding(float[] embedding) {

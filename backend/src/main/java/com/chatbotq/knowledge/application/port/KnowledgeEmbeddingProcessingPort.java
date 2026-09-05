@@ -9,4 +9,6 @@ public interface KnowledgeEmbeddingProcessingPort {
     Optional<ClaimedKnowledgeEmbedding> claimOnePending();
 
     boolean markReady(ClaimedKnowledgeEmbedding claim, float[] embedding);
+
+    boolean markFailed(ClaimedKnowledgeEmbedding claim, String errorCode, String errorMessage);
 }

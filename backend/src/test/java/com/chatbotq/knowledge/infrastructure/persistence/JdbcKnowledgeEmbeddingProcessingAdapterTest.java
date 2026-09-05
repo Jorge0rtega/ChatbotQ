@@ -86,6 +86,50 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
     }
 
     @Test
+    void marksMatchingProcessingRevisionFailedWithoutVectorAndWithSafeDiagnostics() {
+        UUID entryId = pending("Failing question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding claim = processing.claimOnePending().get();
+
+        assertTrue(processing.markFailed(claim, "PROVIDER_TRANSIENT", "Embedding provider temporarily unavailable"));
+
+        assertEquals("FAILED", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(null, jdbc.queryForObject("select embedding from knowledge_entry where id=?", Object.class, entryId));
+        assertEquals(null, jdbc.queryForObject("select embedded_at from knowledge_entry where id=?", Object.class, entryId));
+        assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
+        assertTrue(jdbc.queryForObject("select embedding_last_attempt_at is not null from knowledge_entry where id=?", Boolean.class, entryId));
+        assertEquals("PROVIDER_TRANSIENT", jdbc.queryForObject("select embedding_last_error_code from knowledge_entry where id=?", String.class, entryId));
+        assertEquals("Embedding provider temporarily unavailable", jdbc.queryForObject("select embedding_last_error_message from knowledge_entry where id=?", String.class, entryId));
+    }
+
+    @Test
+    void staleClaimCannotMarkNewerPendingRevisionFailed() {
+        UUID entryId = pending("Original question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding oldClaim = processing.claimOnePending().get();
+        jdbc.update("update knowledge_entry set question='Updated question',embedding_status='PENDING',embedding_revision=2,"
+            + "embedding_attempt_count=0,embedding_last_attempt_at=null,embedding_last_error_code=null,embedding_last_error_message=null where id=?", entryId);
+
+        assertFalse(processing.markFailed(oldClaim, "PROVIDER_TRANSIENT", "Embedding provider temporarily unavailable"));
+
+        assertEquals("PENDING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(2L, jdbc.queryForObject("select embedding_revision from knowledge_entry where id=?", Long.class, entryId).longValue());
+        assertEquals(null, jdbc.queryForObject("select embedding_last_error_code from knowledge_entry where id=?", String.class, entryId));
+    }
+
+    @Test
+    void rejectsUnsafeFailureDiagnosticsBeforeDatabaseWrite() {
+        UUID entryId = pending("Validation question", Instant.parse("2026-09-04T12:00:00Z"));
+        ClaimedKnowledgeEmbedding claim = processing.claimOnePending().get();
+
+        assertThrows(IllegalArgumentException.class, () -> processing.markFailed(claim, "provider-transient", "safe message"));
+        assertThrows(IllegalArgumentException.class, () -> processing.markFailed(claim, "PROVIDER_TRANSIENT", "line one\nline two"));
+        assertThrows(IllegalArgumentException.class, () -> processing.markFailed(claim, "PROVIDER_TRANSIENT",
+            "OpenAI 401 api_key=sk-real-secret"));
+
+        assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(null, jdbc.queryForObject("select embedding_last_error_code from knowledge_entry where id=?", String.class, entryId));
+    }
+
+    @Test
     void staleClaimCannotOverwriteNewerPendingRevision() {
         UUID entryId = pending("Original question", Instant.parse("2026-09-04T12:00:00Z"));
         ClaimedKnowledgeEmbedding oldClaim = processing.claimOnePending().get();
