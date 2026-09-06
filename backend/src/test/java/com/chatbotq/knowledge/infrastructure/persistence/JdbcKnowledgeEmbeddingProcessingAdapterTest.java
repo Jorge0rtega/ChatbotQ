@@ -69,6 +69,9 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         assertEquals("What are your hours?", claimed.get().getQuestion());
         assertFalse(second.isPresent());
         assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(0, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
+        assertEquals(null, jdbc.queryForObject("select embedding_last_attempt_at from knowledge_entry where id=?", Object.class, entryId));
+        assertTrue(processing.recordProviderAttempt(claimed.get()));
         assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
         assertTrue(jdbc.queryForObject("select embedding_last_attempt_at is not null from knowledge_entry where id=?", Boolean.class, entryId));
     }
@@ -92,6 +95,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
     void marksMatchingProcessingRevisionFailedWithoutVectorAndWithSafeDiagnostics() {
         UUID entryId = pending("Failing question", Instant.parse("2026-09-04T12:00:00Z"));
         ClaimedKnowledgeEmbedding claim = processing.claimOnePending().get();
+        assertTrue(processing.recordProviderAttempt(claim));
 
         assertTrue(processing.markFailed(claim, "PROVIDER_TRANSIENT", "Embedding provider temporarily unavailable"));
 
@@ -200,6 +204,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
     void expiredProcessingLeaseIsReclaimedWithNewTokenAndOldWorkerCannotFinish() {
         UUID entryId = pending("Recoverable question", Instant.parse("2026-09-04T12:00:00Z"));
         ClaimedKnowledgeEmbedding abandoned = processing.claimOnePending().get();
+        assertTrue(processing.recordProviderAttempt(abandoned));
         jdbc.update("update knowledge_entry set embedding_processing_lease_expires_at=current_timestamp-interval '1 second' where id=?", entryId);
 
         ClaimedKnowledgeEmbedding reclaimed = processing.claimOnePending().get();
@@ -208,6 +213,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         assertEquals(abandoned.getEmbeddingRevision(), reclaimed.getEmbeddingRevision());
         assertFalse(abandoned.getClaimToken().equals(reclaimed.getClaimToken()));
         assertFalse(processing.markFailed(abandoned, "PROVIDER_FAILURE", "Embedding generation failed"));
+        assertTrue(processing.recordProviderAttempt(reclaimed));
         assertTrue(processing.markReady(reclaimed, vector()));
         assertEquals("READY", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
         assertEquals(2, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
@@ -232,7 +238,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
             ClaimedKnowledgeEmbedding claimed = firstClaim.isPresent() ? firstClaim.get() : secondClaim.get();
             assertEquals(1, claims);
             assertEquals(entryId, claimed.getEntryId());
-            assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
+            assertEquals(0, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
         } finally {
             workers.shutdownNow();
         }

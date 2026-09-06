@@ -45,7 +45,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(11, result.migrationsExecuted);
+        assertEquals(12, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -63,9 +63,9 @@ class DatabaseMigrationTest {
                     + "'user_project_role', 'knowledge_entry', 'conversation', "
                     + "'conversation_message', 'retrieval_trace', 'retrieval_candidate', "
                     + "'handoff_request', 'knowledge_import_job', 'provider_usage', "
-                    + "'admin_refresh_session')")) {
+                    + "'admin_refresh_session', 'embedding_budget_reservation')")) {
                 assertTrue(tables.next());
-                assertEquals(13, tables.getInt(1));
+                assertEquals(14, tables.getInt(1));
             }
 
             UUID projectId = UUID.randomUUID();
@@ -110,7 +110,7 @@ class DatabaseMigrationTest {
         Flyway flyway = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).createSchemas(true).locations("classpath:db/migration").load();
-        assertEquals(11, flyway.migrate().migrationsExecuted);
+        assertEquals(12, flyway.migrate().migrationsExecuted);
 
         String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -166,7 +166,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(2, upgraded.migrate().migrationsExecuted);
+        assertEquals(3, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
 
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -204,7 +204,7 @@ class DatabaseMigrationTest {
         }
         Flyway upgraded = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        assertEquals(2, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
              PreparedStatement query = connection.prepareStatement(
@@ -278,7 +278,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(5, upgraded.migrate().migrationsExecuted);
+        assertEquals(6, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl,
                 POSTGRES.getUsername(), POSTGRES.getPassword());

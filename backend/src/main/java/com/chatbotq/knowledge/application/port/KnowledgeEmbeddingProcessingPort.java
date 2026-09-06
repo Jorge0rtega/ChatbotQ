@@ -8,6 +8,9 @@ import java.util.Optional;
 public interface KnowledgeEmbeddingProcessingPort {
     Optional<ClaimedKnowledgeEmbedding> claimOnePending();
 
+    /** Records a provider attempt while the claim is still owned. */
+    boolean recordProviderAttempt(ClaimedKnowledgeEmbedding claim);
+
     boolean markReady(ClaimedKnowledgeEmbedding claim, float[] embedding);
 
     boolean markFailed(ClaimedKnowledgeEmbedding claim, String errorCode, String errorMessage);

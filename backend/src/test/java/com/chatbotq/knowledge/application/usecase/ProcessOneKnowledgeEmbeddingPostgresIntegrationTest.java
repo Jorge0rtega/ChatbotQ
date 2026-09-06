@@ -1,5 +1,6 @@
 package com.chatbotq.knowledge.application.usecase;
 
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcEmbeddingBudgetReservationAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import org.flywaydb.core.Flyway;
@@ -20,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +49,7 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("delete from embedding_budget_reservation");
         jdbc.update("delete from knowledge_entry");
         jdbc.update("delete from project");
     }
@@ -54,16 +57,47 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
     @Test
     void invalidProviderResponseEndsTheClaimFailedWithTheFixedDiagnostic() {
         UUID entryId = pending("Invalid vector question");
+        AtomicInteger providerInvocations = new AtomicInteger();
         ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(
-            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc), input -> null);
+            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc), reservations(), input -> {
+                providerInvocations.incrementAndGet();
+                return null;
+            });
 
         assertEquals(ProcessOneKnowledgeEmbeddingUseCase.Result.FAILED, useCase.processOne());
+        assertEquals(1, providerInvocations.get());
+        assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
         assertEquals("FAILED", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
         assertEquals("PROVIDER_INVALID_RESPONSE", jdbc.queryForObject(
             "select embedding_last_error_code from knowledge_entry where id=?", String.class, entryId));
         assertEquals("Embedding provider returned an invalid response", jdbc.queryForObject(
             "select embedding_last_error_message from knowledge_entry where id=?", String.class, entryId));
         assertEquals(null, jdbc.queryForObject("select embedding from knowledge_entry where id=?", Object.class, entryId));
+        assertEquals(1, jdbc.queryForObject("select count(*) from embedding_budget_reservation where knowledge_entry_id=?", Integer.class, entryId).intValue());
+    }
+
+    @Test
+    void deniedBudgetDoesNotRecordAProviderAttempt() {
+        UUID entryId = pending("Budget denied question");
+        Timestamp priorAttemptAt = Timestamp.from(Instant.parse("2026-09-04T12:00:00Z"));
+        jdbc.update("update knowledge_entry set embedding_attempt_count=3,embedding_last_attempt_at=? where id=?",
+            priorAttemptAt, entryId);
+        AtomicInteger providerInvocations = new AtomicInteger();
+        EmbeddingProvider provider = input -> {
+            providerInvocations.incrementAndGet();
+            return new float[1536];
+        };
+        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(
+            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc),
+            new JdbcEmbeddingBudgetReservationAdapter(jdbc, 100, 250000, java.math.BigDecimal.ZERO), provider);
+
+        assertEquals(ProcessOneKnowledgeEmbeddingUseCase.Result.FAILED, useCase.processOne());
+        assertEquals(0, providerInvocations.get());
+        assertEquals("FAILED", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
+        assertEquals(3, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
+        assertEquals(priorAttemptAt, jdbc.queryForObject("select embedding_last_attempt_at from knowledge_entry where id=?", Timestamp.class, entryId));
+        assertEquals("EMBEDDING_BUDGET_LIMIT_REACHED", jdbc.queryForObject(
+            "select embedding_last_error_code from knowledge_entry where id=?", String.class, entryId));
     }
 
     @Test
@@ -71,7 +105,7 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
         UUID entryId = pending("Original question");
         BlockingProvider provider = new BlockingProvider();
         ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(
-            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc), provider);
+            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc), reservations(), provider);
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
             Future<ProcessOneKnowledgeEmbeddingUseCase.Result> result = worker.submit(useCase::processOne);
@@ -88,6 +122,7 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
             assertEquals("PENDING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
             assertEquals(2L, jdbc.queryForObject("select embedding_revision from knowledge_entry where id=?", Long.class, entryId).longValue());
             assertEquals(null, jdbc.queryForObject("select embedding from knowledge_entry where id=?", Object.class, entryId));
+            assertEquals(1, jdbc.queryForObject("select count(*) from embedding_budget_reservation where knowledge_entry_id=?", Integer.class, entryId).intValue());
         } finally {
             provider.release.countDown();
             worker.shutdownNow();
@@ -99,7 +134,8 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
         UUID entryId = pending("Stable question");
         BlockingProvider provider = new BlockingProvider();
         ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(
-            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc), provider);
+            new JdbcKnowledgeEmbeddingProcessingAdapter(jdbc),
+            new JdbcEmbeddingBudgetReservationAdapter(jdbc, 100, 250000, java.math.BigDecimal.valueOf(20)), provider);
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
             Future<ProcessOneKnowledgeEmbeddingUseCase.Result> result = worker.submit(useCase::processOne);
@@ -114,6 +150,7 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
             assertEquals(1L, jdbc.queryForObject("select embedding_revision from knowledge_entry where id=?", Long.class, entryId).longValue());
             assertFalse(jdbc.queryForObject("select active from knowledge_entry where id=?", Boolean.class, entryId));
             assertEquals(1536, jdbc.queryForObject("select vector_dims(embedding) from knowledge_entry where id=?", Integer.class, entryId).intValue());
+            assertEquals(1, jdbc.queryForObject("select count(*) from embedding_budget_reservation where knowledge_entry_id=?", Integer.class, entryId).intValue());
         } finally {
             provider.release.countDown();
             worker.shutdownNow();
@@ -130,6 +167,10 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
                 + "values (?,?,?,?,'PENDING',1,1,?,?)",
             entryId, projectId, question, "Answer", now, now);
         return entryId;
+    }
+
+    private JdbcEmbeddingBudgetReservationAdapter reservations() {
+        return new JdbcEmbeddingBudgetReservationAdapter(jdbc, 100, 250000, java.math.BigDecimal.valueOf(20));
     }
 
     private static final class BlockingProvider implements EmbeddingProvider {

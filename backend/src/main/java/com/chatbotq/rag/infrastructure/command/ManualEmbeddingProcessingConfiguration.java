@@ -1,13 +1,20 @@
 package com.chatbotq.rag.infrastructure.command;
 
+import com.chatbotq.knowledge.application.port.EmbeddingBudgetReservationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.knowledge.application.usecase.ProcessOneKnowledgeEmbeddingUseCase;
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcEmbeddingBudgetReservationAdapter;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.infrastructure.configuration.EmbeddingProcessingLimits;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.math.BigDecimal;
 
 /**
  * Registers the explicit one-shot CLI trigger only when both manual execution and
@@ -18,10 +25,19 @@ import org.springframework.context.annotation.Configuration;
 public class ManualEmbeddingProcessingConfiguration {
 
     @Bean
+    @ConditionalOnMissingBean(EmbeddingBudgetReservationPort.class)
+    @ConditionalOnBean(JdbcTemplate.class)
+    @ConditionalOnProperty(prefix = "chatbotq.embedding.openai", name = "enabled", havingValue = "true")
+    EmbeddingBudgetReservationPort embeddingBudgetReservationPort(JdbcTemplate jdbc, EmbeddingProcessingLimits limits) {
+        return new JdbcEmbeddingBudgetReservationAdapter(jdbc, limits.getMaxEntriesPerDay(),
+            limits.getMaxInputTokensPerDay(), BigDecimal.valueOf(limits.getMonthlyHardLimitUsd()));
+    }
+
+    @Bean
     @ConditionalOnProperty(prefix = "chatbotq.embedding.openai", name = "enabled", havingValue = "true")
     ProcessOneKnowledgeEmbeddingUseCase processOneKnowledgeEmbeddingUseCase(
-            KnowledgeEmbeddingProcessingPort processing, EmbeddingProvider provider) {
-        return new ProcessOneKnowledgeEmbeddingUseCase(processing, provider);
+            KnowledgeEmbeddingProcessingPort processing, EmbeddingBudgetReservationPort reservations, EmbeddingProvider provider) {
+        return new ProcessOneKnowledgeEmbeddingUseCase(processing, reservations, provider);
     }
 
     @Bean

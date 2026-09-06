@@ -1,6 +1,7 @@
 package com.chatbotq.rag.infrastructure.command;
 
 import com.chatbotq.knowledge.application.model.ClaimedKnowledgeEmbedding;
+import com.chatbotq.knowledge.application.port.EmbeddingBudgetReservationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.infrastructure.configuration.EmbeddingProcessingPolicyConfiguration;
@@ -102,6 +103,11 @@ class ManualEmbeddingProcessingConfigurationTest {
         }
 
         @Bean
+        EmbeddingBudgetReservationPort testEmbeddingBudgetReservationPort() {
+            return claim -> EmbeddingBudgetReservationPort.Decision.RESERVED;
+        }
+
+        @Bean
         EmbeddingProvider embeddingProvider() {
             return input -> new float[1536];
         }
@@ -115,6 +121,11 @@ class ManualEmbeddingProcessingConfigurationTest {
         public Optional<ClaimedKnowledgeEmbedding> claimOnePending() {
             claims++;
             return Optional.of(new ClaimedKnowledgeEmbedding(java.util.UUID.randomUUID(), 1L, "question"));
+        }
+
+        @Override
+        public boolean recordProviderAttempt(ClaimedKnowledgeEmbedding claim) {
+            return true;
         }
 
         @Override

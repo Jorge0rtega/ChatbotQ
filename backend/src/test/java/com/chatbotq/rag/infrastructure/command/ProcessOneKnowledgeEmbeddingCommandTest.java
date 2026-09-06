@@ -1,6 +1,7 @@
 package com.chatbotq.rag.infrastructure.command;
 
 import com.chatbotq.knowledge.application.model.ClaimedKnowledgeEmbedding;
+import com.chatbotq.knowledge.application.port.EmbeddingBudgetReservationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.knowledge.application.usecase.ProcessOneKnowledgeEmbeddingUseCase;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
@@ -17,7 +18,8 @@ class ProcessOneKnowledgeEmbeddingCommandTest {
     void processesExactlyOnePendingEntryPerInvocation() {
         RecordingProcessingPort processing = new RecordingProcessingPort();
         EmbeddingProvider provider = input -> vector();
-        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(processing, provider);
+        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(processing,
+            claim -> EmbeddingBudgetReservationPort.Decision.RESERVED, provider);
         ProcessOneKnowledgeEmbeddingCommand command = new ProcessOneKnowledgeEmbeddingCommand(
             useCase, new EmbeddingProcessingLimits(1, 4000, 100, 250000, 10, 20));
 
@@ -35,6 +37,7 @@ class ProcessOneKnowledgeEmbeddingCommandTest {
             claims++;
             return Optional.of(new ClaimedKnowledgeEmbedding(UUID.randomUUID(), 1, "question"));
         }
+        @Override public boolean recordProviderAttempt(ClaimedKnowledgeEmbedding claim) { return true; }
         @Override public boolean markReady(ClaimedKnowledgeEmbedding claim, float[] embedding) { readyCalls++; return true; }
         @Override public boolean markFailed(ClaimedKnowledgeEmbedding claim, String code, String message) { return true; }
     }

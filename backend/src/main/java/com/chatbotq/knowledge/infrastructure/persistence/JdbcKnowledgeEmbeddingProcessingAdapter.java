@@ -28,16 +28,27 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
                 + "or (embedding_status='PROCESSING' and embedding_processing_lease_expires_at<=clock_timestamp()) "
                 + "order by updated_at,id for update skip locked limit 1), claimed as (update knowledge_entry e "
                 + "set embedding_status='PROCESSING',embedding_processing_claim_token=gen_random_uuid(),"
-                + "embedding_processing_lease_expires_at=clock_timestamp()+interval '5 minutes',"
-                + "embedding_attempt_count=e.embedding_attempt_count+1,embedding_last_attempt_at=clock_timestamp() "
+                + "embedding_processing_lease_expires_at=clock_timestamp()+interval '5 minutes' "
                 + "from candidate c where e.id=c.id and (e.embedding_status='PENDING' or "
                 + "(e.embedding_status='PROCESSING' and e.embedding_processing_lease_expires_at<=clock_timestamp())) "
-                + "returning e.id,e.embedding_revision,e.question,e.embedding_processing_claim_token) "
-                + "select id,embedding_revision,question,embedding_processing_claim_token from claimed",
+                + "returning e.id,e.project_id,e.embedding_revision,e.question,e.embedding_input_token_upper_bound,e.embedding_processing_claim_token) "
+                + "select id,project_id,embedding_revision,question,embedding_input_token_upper_bound,embedding_processing_claim_token from claimed",
             (rs, rowNum) -> new ClaimedKnowledgeEmbedding(rs.getObject("id", java.util.UUID.class),
-                rs.getLong("embedding_revision"), rs.getString("question"),
+                rs.getObject("project_id", java.util.UUID.class), rs.getLong("embedding_revision"), rs.getString("question"),
+                rs.getInt("embedding_input_token_upper_bound"),
                 rs.getObject("embedding_processing_claim_token", java.util.UUID.class)));
         return claims.isEmpty() ? Optional.empty() : Optional.of(claims.get(0));
+    }
+
+    @Override
+    @Transactional
+    public boolean recordProviderAttempt(ClaimedKnowledgeEmbedding claim) {
+        if (claim == null) throw new IllegalArgumentException("claim must not be null");
+        return jdbc.update("update knowledge_entry set embedding_attempt_count=embedding_attempt_count+1,"
+                + "embedding_last_attempt_at=clock_timestamp(),updated_at=current_timestamp "
+                + "where id=? and embedding_revision=? and embedding_status='PROCESSING' and embedding_processing_claim_token=? "
+                + "and embedding_processing_lease_expires_at>clock_timestamp()",
+            claim.getEntryId(), claim.getEmbeddingRevision(), claim.getClaimToken()) == 1;
     }
 
     @Override
@@ -80,6 +91,7 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
         messages.put("PROVIDER_UNAVAILABLE", "Embedding provider unavailable");
         messages.put("PROVIDER_INVALID_RESPONSE", "Embedding provider returned an invalid response");
         messages.put("PROVIDER_FAILURE", "Embedding generation failed");
+        messages.put("EMBEDDING_BUDGET_LIMIT_REACHED", "Embedding budget limit reached");
         return Collections.unmodifiableMap(messages);
     }
 
