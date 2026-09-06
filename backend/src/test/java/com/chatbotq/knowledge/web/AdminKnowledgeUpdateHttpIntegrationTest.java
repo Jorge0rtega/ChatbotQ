@@ -140,8 +140,8 @@ class AdminKnowledgeUpdateHttpIntegrationTest {
             .andExpect(status().isOk()).andExpect(jsonPath("$.question").value("Changed")).andExpect(jsonPath("$.answer").value("New answer"))
             .andExpect(jsonPath("$.externalId").value("changed-id")).andExpect(jsonPath("$.active").value(false))
             .andExpect(jsonPath("$.version").value(1)).andExpect(jsonPath("$.embeddingStatus").value("PENDING")).andExpect(jsonPath("$.embeddingRevision").value(8));
-        Map<String,Object> row = jdbc.queryForMap("select version,embedding,embedded_at,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message from knowledge_entry where id=?", id);
-        assertEquals(1L, ((Number) row.get("version")).longValue()); assertEquals(null, row.get("embedding")); assertEquals(null, row.get("embedded_at"));
+        Map<String,Object> row = jdbc.queryForMap("select version,embedding,embedded_at,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,embedding_input_token_upper_bound from knowledge_entry where id=?", id);
+        assertEquals(1L, ((Number) row.get("version")).longValue()); assertEquals(7, ((Number) row.get("embedding_input_token_upper_bound")).intValue()); assertEquals(null, row.get("embedding")); assertEquals(null, row.get("embedded_at"));
         assertEquals(0, ((Number) row.get("embedding_attempt_count")).intValue()); assertEquals(null, row.get("embedding_last_attempt_at"));
         assertEquals(null, row.get("embedding_last_error_code")); assertEquals(null, row.get("embedding_last_error_message"));
     }
@@ -150,8 +150,25 @@ class AdminKnowledgeUpdateHttpIntegrationTest {
         String token = login("general-update@example.com"); JsonNode entry = create(token, projectId, "Question", "Answer", "external", true); UUID id = UUID.fromString(entry.get("id").asText()); setReady(id, 7);
         mvc.perform(update(token, id, "Question", "New answer", "external", true, 0)).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1)).andExpect(jsonPath("$.embeddingRevision").value(7));
         mvc.perform(update(token, id, "Question", "New answer", "external", false, 1)).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2)).andExpect(jsonPath("$.embeddingStatus").value("READY"));
-        Map<String,Object> row = jdbc.queryForMap("select vector_dims(embedding) dimensions,embedded_at,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,embedding_revision from knowledge_entry where id=?", id);
-        assertEquals(1536, ((Number) row.get("dimensions")).intValue()); assertEquals(3, ((Number) row.get("embedding_attempt_count")).intValue()); assertEquals("TRANSIENT", row.get("embedding_last_error_code")); assertEquals(7L, ((Number) row.get("embedding_revision")).longValue());
+        Map<String,Object> row = jdbc.queryForMap("select vector_dims(embedding) dimensions,embedded_at,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,embedding_revision,embedding_input_token_upper_bound from knowledge_entry where id=?", id);
+        assertEquals(1536, ((Number) row.get("dimensions")).intValue()); assertEquals(8, ((Number) row.get("embedding_input_token_upper_bound")).intValue()); assertEquals(3, ((Number) row.get("embedding_attempt_count")).intValue()); assertEquals("TRANSIENT", row.get("embedding_last_error_code")); assertEquals(7L, ((Number) row.get("embedding_revision")).longValue());
+    }
+
+    @Test void answerOnlyUpdateOfLegacyOverLimitQuestionSucceedsAndPreservesStoredBound() throws Exception {
+        String token = login("general-update@example.com");
+        JsonNode entry = create(token, projectId, "Question", "Answer", "external", true);
+        UUID id = UUID.fromString(entry.get("id").asText());
+        String legacyQuestion = repeat('界', 1500);
+        jdbc.update("update knowledge_entry set question=?,embedding_input_token_upper_bound=4500 where id=?", legacyQuestion, id);
+
+        mvc.perform(update(token, id, legacyQuestion, "Updated answer", "external", true, 0))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.answer").value("Updated answer"));
+
+        Map<String,Object> row = jdbc.queryForMap(
+            "select question,answer,embedding_input_token_upper_bound from knowledge_entry where id=?", id);
+        assertEquals(legacyQuestion, row.get("question"));
+        assertEquals("Updated answer", row.get("answer"));
+        assertEquals(4500, ((Number) row.get("embedding_input_token_upper_bound")).intValue());
     }
 
     @Test void noOpDoesNotBumpVersionAndStaleVersionConflictsWithoutWrite() throws Exception {

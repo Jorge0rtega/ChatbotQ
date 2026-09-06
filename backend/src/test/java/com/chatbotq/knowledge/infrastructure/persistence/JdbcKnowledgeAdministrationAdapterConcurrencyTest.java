@@ -75,8 +75,8 @@ class JdbcKnowledgeAdministrationAdapterConcurrencyTest {
         jdbc.update("insert into project(id,name,status) values (?,?,'ACTIVE')", project, "Project");
         jdbc.update("insert into user_project_role(user_id,project_id,role) values (?,?,'PROJECT_ADMIN')",
             projectAdmin, project);
-        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,active,created_by,updated_by) "
-            + "values (?,?,? ,?,true,?,?)", entry, project, "Question", "Answer", general, general);
+        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,active,embedding_input_token_upper_bound,created_by,updated_by) "
+            + "values (?,?,? ,?,true,1,?,?)", entry, project, "Question", "Answer", general, general);
     }
 
     @Test
@@ -87,7 +87,7 @@ class JdbcKnowledgeAdministrationAdapterConcurrencyTest {
             token, entry);
 
         ManagedKnowledgeEntry updated = knowledge.update(general, project, entry, "Changed question", "Answer", "external", true,
-            0, Instant.parse("2026-09-05T12:00:00Z"));
+            0, 16, Instant.parse("2026-09-05T12:00:00Z"));
 
         assertEquals("Changed question", updated.getQuestion());
         assertEquals("PENDING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entry));
@@ -140,7 +140,7 @@ class JdbcKnowledgeAdministrationAdapterConcurrencyTest {
             });
             assertTrue(entryLocked.await(5, TimeUnit.SECONDS));
             Future<ManagedKnowledgeEntry> update = executor.submit(() -> transactions.execute(status -> knowledge.update(
-                projectAdmin, project, entry, "Changed", "Answer", "external", true, 0,
+                projectAdmin, project, entry, "Changed", "Answer", "external", true, 0, 7,
                 Instant.parse("2026-09-03T12:00:00Z"))));
             waitForKnowledgeUpdateToBlock(update);
             Future<?> revoke = executor.submit(new Runnable() {

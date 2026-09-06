@@ -109,6 +109,20 @@ class AdminKnowledgeHttpIntegrationTest {
         assertEquals(1L, ((Number) row.get("embedding_revision")).longValue());
         assertEquals(null, row.get("embedding"));
         assertEquals(null, row.get("embedded_at"));
+        assertEquals(22, ((Number) jdbc.queryForObject("select embedding_input_token_upper_bound from knowledge_entry where id=?", Number.class,
+            UUID.fromString(response.get("id").asText()))).intValue());
+    }
+
+    @Test
+    void rejectsQuestionOverUtf8EmbeddingLimitBeforeKnowledgeInsert() throws Exception {
+        String token = login("general-knowledge@example.com");
+
+        mvc.perform(post("/api/admin/projects/" + projectId + "/knowledge")
+                .header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"question\":\"" + repeat("🙂", 1001) + "\",\"answer\":\"Answer\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("invalid_request"));
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from knowledge_entry", Integer.class));
     }
 
     @Test
@@ -499,6 +513,12 @@ class AdminKnowledgeHttpIntegrationTest {
             .andExpect(status().isBadRequest());
     }
 
+    private static String repeat(String value, int count) {
+        StringBuilder output = new StringBuilder(value.length() * count);
+        for (int index = 0; index < count; index++) output.append(value);
+        return output.toString();
+    }
+
     private static String repeat(char character, int count) {
         StringBuilder value = new StringBuilder(count);
         for (int index = 0; index < count; index++) value.append(character);
@@ -507,8 +527,8 @@ class AdminKnowledgeHttpIntegrationTest {
 
     private void insertKnowledge(UUID targetProjectId, String id, String question, String answer, String externalId,
                                  String updatedAt) {
-        jdbc.update("insert into knowledge_entry (id,project_id,question,answer,external_id,active,created_at,updated_at) "
-                + "values (?,?,?,?,?,true,?,?)", UUID.fromString(id), targetProjectId, question, answer, externalId,
+        jdbc.update("insert into knowledge_entry (id,project_id,question,answer,external_id,active,embedding_input_token_upper_bound,created_at,updated_at) "
+                + "values (?,?,?,?,?,true,1,?,?)", UUID.fromString(id), targetProjectId, question, answer, externalId,
             java.sql.Timestamp.from(java.time.Instant.parse(updatedAt)), java.sql.Timestamp.from(java.time.Instant.parse(updatedAt)));
     }
 

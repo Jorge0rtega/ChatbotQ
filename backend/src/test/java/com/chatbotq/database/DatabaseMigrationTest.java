@@ -45,7 +45,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(10, result.migrationsExecuted);
+        assertEquals(11, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -73,7 +73,7 @@ class DatabaseMigrationTest {
             try (PreparedStatement insertProject = connection.prepareStatement(
                     "insert into project(id,name) values (?,?)");
                  PreparedStatement insertKnowledge = connection.prepareStatement(
-                    "insert into knowledge_entry(id,project_id,question,answer) values (?,?,?,?)");
+                    "insert into knowledge_entry(id,project_id,question,answer,embedding_input_token_upper_bound) values (?,?,?,?,?)");
                  PreparedStatement query = connection.prepareStatement(
                     "select embedding_status,embedding_revision,embedding_attempt_count,"
                         + "embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message "
@@ -86,6 +86,7 @@ class DatabaseMigrationTest {
                 insertKnowledge.setObject(2, projectId);
                 insertKnowledge.setString(3, "What is the lifecycle?");
                 insertKnowledge.setString(4, "It is explicit and traceable.");
+                insertKnowledge.setInt(5, 22);
                 insertKnowledge.executeUpdate();
 
                 query.setObject(1, knowledgeEntryId);
@@ -109,7 +110,7 @@ class DatabaseMigrationTest {
         Flyway flyway = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).createSchemas(true).locations("classpath:db/migration").load();
-        assertEquals(10, flyway.migrate().migrationsExecuted);
+        assertEquals(11, flyway.migrate().migrationsExecuted);
 
         String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -120,15 +121,15 @@ class DatabaseMigrationTest {
             statement.executeUpdate("insert into project(id,name) values ('" + projectId + "','Lifecycle constraints')");
 
             SQLException readyWithoutVectorAndTimestamp = assertThrows(SQLException.class, () -> statement.executeUpdate(
-                "insert into knowledge_entry(id,project_id,question,answer,embedding_status) values ('"
-                    + UUID.randomUUID() + "','" + projectId + "','Question','Answer','READY')"));
+                "insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_input_token_upper_bound) values ('"
+                    + UUID.randomUUID() + "','" + projectId + "','Question','Answer','READY',1)"));
             assertEquals("23514", readyWithoutVectorAndTimestamp.getSQLState());
 
             for (String nonReadyStatus : new String[]{"PENDING", "PROCESSING", "FAILED"}) {
                 SQLException nonReadyWithVectorAndTimestamp = assertThrows(SQLException.class, () -> statement.executeUpdate(
-                    "insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding,embedded_at) values ('"
+                    "insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_input_token_upper_bound,embedding,embedded_at) values ('"
                         + UUID.randomUUID() + "','" + projectId + "','Question','Answer','" + nonReadyStatus
-                        + "',array_fill(0::real, ARRAY[1536])::vector,current_timestamp)"));
+                        + "',1,array_fill(0::real, ARRAY[1536])::vector,current_timestamp)"));
                 assertEquals("23514", nonReadyWithVectorAndTimestamp.getSQLState());
             }
         }
@@ -165,7 +166,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        assertEquals(2, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
 
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -180,6 +181,42 @@ class DatabaseMigrationTest {
                 assertNull(row.getObject("embedding_processing_claim_token"));
                 assertNull(row.getObject("embedding_processing_lease_expires_at"));
             }
+        }
+    }
+
+    @Test
+    void backfillsUtf8EmbeddingInputTokenUpperBoundAndEnforcesPositiveValue() throws Exception {
+        String schema = "embedding_input_token_upper_bound_upgrade";
+        installExtensionsInPublicSchema();
+        Flyway before = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).createSchemas(true).locations("classpath:db/migration").target("010").load();
+        assertEquals(10, before.migrate().migrationsExecuted);
+        String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
+        UUID projectId = UUID.randomUUID();
+        UUID entryId = UUID.randomUUID();
+        try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement project = connection.prepareStatement("insert into project(id,name) values (?,?)");
+             PreparedStatement entry = connection.prepareStatement(
+                 "insert into knowledge_entry(id,project_id,question,answer) values (?,?,?,?)")) {
+            project.setObject(1, projectId); project.setString(2, "Token bound upgrade"); project.executeUpdate();
+            entry.setObject(1, entryId); entry.setObject(2, projectId); entry.setString(3, "ñ🙂"); entry.setString(4, "Answer");
+            entry.executeUpdate();
+        }
+        Flyway upgraded = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).locations("classpath:db/migration").load();
+        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        upgraded.validate();
+        try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement query = connection.prepareStatement(
+                 "select embedding_input_token_upper_bound from knowledge_entry where id=?")) {
+            query.setObject(1, entryId);
+            try (ResultSet row = query.executeQuery()) {
+                assertTrue(row.next());
+                assertEquals(6, row.getInt("embedding_input_token_upper_bound"));
+            }
+            SQLException nonPositive = assertThrows(SQLException.class, () -> connection.createStatement().executeUpdate(
+                "update knowledge_entry set embedding_input_token_upper_bound=0 where id='" + entryId + "'"));
+            assertEquals("23514", nonPositive.getSQLState());
         }
     }
 
@@ -241,7 +278,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(4, upgraded.migrate().migrationsExecuted);
+        assertEquals(5, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl,
                 POSTGRES.getUsername(), POSTGRES.getPassword());

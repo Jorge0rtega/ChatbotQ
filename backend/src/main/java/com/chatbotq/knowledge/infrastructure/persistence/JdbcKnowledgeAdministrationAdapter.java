@@ -29,7 +29,7 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
     @Override
     @Transactional
     public ManagedKnowledgeEntry create(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
-                                        String externalId, boolean active, Instant now) {
+                                        String externalId, boolean active, int embeddingInputTokenUpperBound, Instant now) {
         List<CreateOutcome> outcomes = jdbc.query(
             "with actor as materialized (select u.id,u.is_general_admin from admin_user u where u.id=? "
                 + "and u.status='ACTIVE' and (u.locked_until is null or u.locked_until<=current_timestamp)), "
@@ -39,14 +39,14 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
                 + "join target p on p.status='ACTIVE' where a.is_general_admin or exists (select 1 "
                 + "from user_project_role upr where upr.user_id=a.id and upr.project_id=p.id "
                 + "and upr.role='PROJECT_ADMIN')) authorized), inserted as (insert into knowledge_entry "
-                + "(id,project_id,question,answer,external_id,active,created_by,updated_by,created_at,updated_at) "
-                + "select ?,t.id,?,?,?,?,?,?,?,? from target t cross join decision d where d.authorized "
+                + "(id,project_id,question,answer,external_id,active,embedding_input_token_upper_bound,created_by,updated_by,created_at,updated_at) "
+                + "select ?,t.id,?,?,?,?,?,?,?,?,? from target t cross join decision d where d.authorized "
                 + "returning id,project_id,question,answer,external_id,active,embedding_status,embedding_revision,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,version,"
                 + "created_at,updated_at) select d.general_admin,d.project_exists,d.authorized,i.id,i.project_id,"
                 + "i.question,i.answer,i.external_id,i.active,i.embedding_status,i.embedding_revision,i.embedding_attempt_count,i.embedding_last_attempt_at,i.embedding_last_error_code,i.embedding_last_error_message,i.version,i.created_at,"
                 + "i.updated_at from decision d left join inserted i on true",
             (rs, rowNum) -> mapOutcome(rs), actorId, projectId, entryId, question, answer, externalId, active,
-            actorId, actorId, Timestamp.from(now), Timestamp.from(now));
+            embeddingInputTokenUpperBound, actorId, actorId, Timestamp.from(now), Timestamp.from(now));
         CreateOutcome outcome = outcomes.get(0);
         if (!outcome.authorized) {
             if (outcome.generalAdmin && !outcome.projectExists) throw new ProjectNotFoundException();
@@ -86,7 +86,8 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
     @Override
     @Transactional
     public ManagedKnowledgeEntry update(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
-                                        String externalId, boolean active, long version, Instant now) {
+                                        String externalId, boolean active, long version, int embeddingInputTokenUpperBound,
+                                        Instant now) {
         List<UpdateOutcome> outcomes = jdbc.query(
             "with locked_actor as materialized (select u.id,u.is_general_admin,u.status,u.locked_until from admin_user u where u.id=? for update), "
                 + "actor as materialized (select a.id,a.is_general_admin from locked_actor a where a.status='ACTIVE' and (a.locked_until is null or a.locked_until<=current_timestamp)), "
@@ -94,11 +95,12 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
                 + "target as materialized (select p.id,p.status from locked_target p), "
                 + "decision as materialized (select exists (select 1 from actor a where a.is_general_admin) general_admin,exists (select 1 from target) project_exists,exists (select 1 from actor a join target p on p.status='ACTIVE' where a.is_general_admin or exists (select 1 from user_project_role upr where upr.user_id=a.id and upr.project_id=p.id and upr.role='PROJECT_ADMIN')) authorized), "
                 + "entry as materialized (select e.* from knowledge_entry e join target t on t.id=e.project_id cross join decision d where e.id=? and d.authorized for update), "
-                + "updated as (update knowledge_entry u set question=?,answer=?,external_id=?,active=?,updated_by=?,updated_at=?,version=u.version+1,embedding_status=case when u.question is distinct from ? then 'PENDING' else u.embedding_status end,embedding_revision=case when u.question is distinct from ? then u.embedding_revision+1 else u.embedding_revision end,embedding=case when u.question is distinct from ? then null else u.embedding end,embedded_at=case when u.question is distinct from ? then null else u.embedded_at end,embedding_attempt_count=case when u.question is distinct from ? then 0 else u.embedding_attempt_count end,embedding_last_attempt_at=case when u.question is distinct from ? then null else u.embedding_last_attempt_at end,embedding_last_error_code=case when u.question is distinct from ? then null else u.embedding_last_error_code end,embedding_last_error_message=case when u.question is distinct from ? then null else u.embedding_last_error_message end,embedding_processing_claim_token=case when u.question is distinct from ? then null else u.embedding_processing_claim_token end,embedding_processing_lease_expires_at=case when u.question is distinct from ? then null else u.embedding_processing_lease_expires_at end from entry e where u.id=e.id and u.version=? and (u.question is distinct from ? or u.answer is distinct from ? or u.external_id is distinct from ? or u.active is distinct from ?) and (u.question is not distinct from ? or u.embedding_revision < 9223372036854775807) returning u.*), "
+                + "updated as (update knowledge_entry u set question=?,answer=?,external_id=?,active=?,updated_by=?,updated_at=?,version=u.version+1,embedding_input_token_upper_bound=case when u.question is distinct from ? then ? else u.embedding_input_token_upper_bound end,embedding_status=case when u.question is distinct from ? then 'PENDING' else u.embedding_status end,embedding_revision=case when u.question is distinct from ? then u.embedding_revision+1 else u.embedding_revision end,embedding=case when u.question is distinct from ? then null else u.embedding end,embedded_at=case when u.question is distinct from ? then null else u.embedded_at end,embedding_attempt_count=case when u.question is distinct from ? then 0 else u.embedding_attempt_count end,embedding_last_attempt_at=case when u.question is distinct from ? then null else u.embedding_last_attempt_at end,embedding_last_error_code=case when u.question is distinct from ? then null else u.embedding_last_error_code end,embedding_last_error_message=case when u.question is distinct from ? then null else u.embedding_last_error_message end,embedding_processing_claim_token=case when u.question is distinct from ? then null else u.embedding_processing_claim_token end,embedding_processing_lease_expires_at=case when u.question is distinct from ? then null else u.embedding_processing_lease_expires_at end from entry e where u.id=e.id and u.version=? and (u.question is distinct from ? or u.answer is distinct from ? or u.external_id is distinct from ? or u.active is distinct from ?) and (u.question is not distinct from ? or u.embedding_revision < 9223372036854775807) returning u.*), "
                 + "snapshot as materialized (select * from updated union all select * from entry where not exists (select 1 from updated)) "
                 + "select d.general_admin,d.project_exists,d.authorized,exists(select 1 from entry) entry_exists,exists(select 1 from entry e where e.version<>?) version_conflict,exists(select 1 from entry e where e.version=? and e.question is distinct from ? and e.embedding_revision=9223372036854775807) revision_conflict,s.id,s.project_id,s.question,s.answer,s.external_id,s.active,s.embedding_status,s.embedding_revision,s.embedding_attempt_count,s.embedding_last_attempt_at,s.embedding_last_error_code,s.embedding_last_error_message,s.version,s.created_at,s.updated_at from decision d left join snapshot s on true",
             (rs, rowNum) -> mapUpdateOutcome(rs), actorId, projectId, entryId, question, answer, externalId, active,
-            actorId, Timestamp.from(now), question, question, question, question, question, question, question, question, question, question,
+            actorId, Timestamp.from(now), question, embeddingInputTokenUpperBound, question, question, question, question,
+            question, question, question, question, question, question,
             version, question, answer, externalId, active, question, version, version, question);
         UpdateOutcome outcome = outcomes.get(0);
         if (!outcome.authorized) {

@@ -1,5 +1,6 @@
 package com.chatbotq.knowledge.application.usecase;
 
+import com.chatbotq.knowledge.application.model.EmbeddingInputTokenUpperBound;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
@@ -15,20 +16,32 @@ public final class AdministerKnowledgeUseCase {
     private final KnowledgeAdministrationPort entries;
     private final KnowledgeEntryIdentityGenerator identities;
     private final Clock clock;
+    private final int maxEmbeddingInputTokensPerEntry;
 
     public AdministerKnowledgeUseCase(KnowledgeAdministrationPort entries,
                                       KnowledgeEntryIdentityGenerator identities, Clock clock) {
+        this(entries, identities, clock, 4000);
+    }
+
+    public AdministerKnowledgeUseCase(KnowledgeAdministrationPort entries,
+                                      KnowledgeEntryIdentityGenerator identities, Clock clock,
+                                      int maxEmbeddingInputTokensPerEntry) {
+        if (maxEmbeddingInputTokensPerEntry < 1) {
+            throw new IllegalArgumentException("maxEmbeddingInputTokensPerEntry must be positive");
+        }
         this.entries = require(entries, "entries");
         this.identities = require(identities, "identities");
         this.clock = require(clock, "clock");
+        this.maxEmbeddingInputTokensPerEntry = maxEmbeddingInputTokensPerEntry;
     }
 
     public ManagedKnowledgeEntry create(UUID actorId, UUID projectId, String question, String answer,
                                         String externalId, boolean active) {
+        String normalizedQuestion = normalize(question, "question", 2000, false);
+        int tokenUpperBound = validateEmbeddingInputTokenUpperBound(normalizedQuestion);
         return entries.create(require(actorId, "actorId"), require(projectId, "projectId"),
-            identities.newKnowledgeEntryId(), normalize(question, "question", 2000, false),
-            normalize(answer, "answer", 8000, false), normalize(externalId, "externalId", 255, true), active,
-            clock.instant());
+            identities.newKnowledgeEntryId(), normalizedQuestion, normalize(answer, "answer", 8000, false),
+            normalize(externalId, "externalId", 255, true), active, tokenUpperBound, clock.instant());
     }
 
     public ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId) {
@@ -39,9 +52,16 @@ public final class AdministerKnowledgeUseCase {
     public ManagedKnowledgeEntry update(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
                                         String externalId, boolean active, long version) {
         if (version < 0) throw new IllegalArgumentException("version must be non-negative");
-        return entries.update(require(actorId, "actorId"), require(projectId, "projectId"), require(entryId, "entryId"),
-            normalize(question, "question", 2000, false), normalize(answer, "answer", 8000, false),
-            normalize(externalId, "externalId", 255, true), active, version, clock.instant());
+        UUID requiredActorId = require(actorId, "actorId");
+        UUID requiredProjectId = require(projectId, "projectId");
+        UUID requiredEntryId = require(entryId, "entryId");
+        String normalizedQuestion = normalize(question, "question", 2000, false);
+        ManagedKnowledgeEntry current = entries.get(requiredActorId, requiredProjectId, requiredEntryId);
+        int tokenUpperBound = normalizedQuestion.equals(current.getQuestion()) ? 0
+            : validateEmbeddingInputTokenUpperBound(normalizedQuestion);
+        return entries.update(requiredActorId, requiredProjectId, requiredEntryId,
+            normalizedQuestion, normalize(answer, "answer", 8000, false), normalize(externalId, "externalId", 255, true),
+            active, version, tokenUpperBound, clock.instant());
     }
 
     public ManagedKnowledgeEntry retryEmbedding(UUID actorId, UUID projectId, UUID entryId, long version) {
@@ -65,6 +85,15 @@ public final class AdministerKnowledgeUseCase {
         if (offset > MAX_OFFSET) throw new IllegalArgumentException("requested page offset is too large");
         String normalizedQuery = normalize(query, "q", 200, true);
         return entries.list(actorId, projectId, escapeLike(normalizedQuery), page, size, offset);
+    }
+
+    private int validateEmbeddingInputTokenUpperBound(String question) {
+        int upperBound = EmbeddingInputTokenUpperBound.forQuestion(question);
+        if (upperBound > maxEmbeddingInputTokensPerEntry) {
+            throw new IllegalArgumentException("question exceeds embedding input token limit of "
+                + maxEmbeddingInputTokensPerEntry);
+        }
+        return upperBound;
     }
 
     private static String escapeLike(String value) {

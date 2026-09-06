@@ -126,8 +126,8 @@ class ProcessOneKnowledgeEmbeddingPostgresIntegrationTest {
         Timestamp now = Timestamp.from(Instant.parse("2026-09-05T12:00:00Z"));
         jdbc.update("insert into project(id,name,status,created_at,updated_at) values (?,?,'ACTIVE',?,?)",
             projectId, "Project " + projectId, now, now);
-        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_revision,created_at,updated_at) "
-                + "values (?,?,?,?,'PENDING',1,?,?)",
+        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_revision,embedding_input_token_upper_bound,created_at,updated_at) "
+                + "values (?,?,?,?,'PENDING',1,1,?,?)",
             entryId, projectId, question, "Answer", now, now);
         return entryId;
     }

@@ -8,12 +8,13 @@ import java.util.UUID;
 
 public interface KnowledgeAdministrationPort {
     ManagedKnowledgeEntry create(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
-                                 String externalId, boolean active, Instant now);
+                                 String externalId, boolean active, int embeddingInputTokenUpperBound, Instant now);
 
     ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId);
 
     ManagedKnowledgeEntry update(UUID actorId, UUID projectId, UUID entryId, String question, String answer,
-                                 String externalId, boolean active, long version, Instant now);
+                                 String externalId, boolean active, long version, int embeddingInputTokenUpperBound,
+                                 Instant now);
 
     ManagedKnowledgeEntry retryEmbedding(UUID actorId, UUID projectId, UUID entryId, long version, Instant now);
 

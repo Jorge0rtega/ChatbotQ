@@ -256,7 +256,7 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         java.sql.Timestamp timestamp = java.sql.Timestamp.from(updatedAt);
         jdbc.update("insert into project(id,name,status,created_at,updated_at) values (?,?,'ACTIVE',?,?)",
             projectId, "Project " + projectId, timestamp, timestamp);
-        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_revision,created_at,updated_at) values (?,?,?,?,'PENDING',1,?,?)",
+        jdbc.update("insert into knowledge_entry(id,project_id,question,answer,embedding_status,embedding_revision,embedding_input_token_upper_bound,created_at,updated_at) values (?,?,?,?,'PENDING',1,1,?,?)",
             entryId, projectId, question, "Answer", timestamp, timestamp);
         return entryId;
     }

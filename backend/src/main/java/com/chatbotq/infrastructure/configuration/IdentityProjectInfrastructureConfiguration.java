@@ -89,8 +89,9 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     AdministerKnowledgeUseCase administerKnowledgeUseCase(KnowledgeAdministrationPort entries,
                                                            KnowledgeEntryIdentityGenerator identities,
-                                                           Clock clock) {
-        return new AdministerKnowledgeUseCase(entries, identities, clock);
+                                                           Clock clock,
+                                                           @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
+        return new AdministerKnowledgeUseCase(entries, identities, clock, maxInputTokensPerEntry);
     }
 
     @Bean
