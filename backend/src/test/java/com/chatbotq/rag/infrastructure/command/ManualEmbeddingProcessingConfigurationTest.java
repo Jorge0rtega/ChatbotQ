@@ -104,7 +104,7 @@ class ManualEmbeddingProcessingConfigurationTest {
 
         @Bean
         EmbeddingBudgetReservationPort testEmbeddingBudgetReservationPort() {
-            return claim -> EmbeddingBudgetReservationPort.Decision.RESERVED;
+            return claim -> EmbeddingBudgetReservationPort.Reservation.of(EmbeddingBudgetReservationPort.Decision.RESERVED);
         }
 
         @Bean

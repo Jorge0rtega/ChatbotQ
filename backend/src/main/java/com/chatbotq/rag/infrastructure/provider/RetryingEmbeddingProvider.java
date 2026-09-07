@@ -1,6 +1,10 @@
 package com.chatbotq.rag.infrastructure.provider;
 
+import com.chatbotq.rag.application.model.EmbeddingAttemptDeniedException;
+import com.chatbotq.rag.application.model.EmbeddingAttemptGate;
+import com.chatbotq.rag.application.model.EmbeddingAttemptStaleException;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
+import com.chatbotq.rag.application.model.EmbeddingRequest;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -39,14 +43,25 @@ public final class RetryingEmbeddingProvider implements EmbeddingProvider {
 
     @Override
     public float[] embed(String input) throws IOException {
+        return embed(input, null);
+    }
+
+    /** Executes each potential HTTP request only after its gate grants a permit. */
+    public float[] embed(EmbeddingRequest request) throws IOException {
+        if (request == null) throw new IllegalArgumentException("request must not be null");
+        return embed(request.getInput(), request.getAttemptGate());
+    }
+
+    private float[] embed(String input, EmbeddingAttemptGate gate) throws IOException {
         long startedAt = System.nanoTime();
         long delayMs = initialBackoffMs;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            EmbeddingAttemptGate.Permit permit = acquire(gate);
+            final float[] embedding;
             try {
-                float[] embedding = delegate.embed(input);
-                recordRequest("success", startedAt);
-                return embedding;
+                embedding = delegate.embed(input);
             } catch (IOException failure) {
+                settle(permit, EmbeddingAttemptGate.Outcome.FAILURE);
                 String category = category(failure);
                 if (attempt == maxAttempts || !isTransient(failure)) {
                     recordRequest("failure", startedAt);
@@ -60,12 +75,28 @@ public final class RetryingEmbeddingProvider implements EmbeddingProvider {
                     throw interrupted;
                 }
                 delayMs = nextDelay(delayMs);
+                continue;
             }
+            settle(permit, EmbeddingAttemptGate.Outcome.SUCCESS);
+            recordRequest("success", startedAt);
+            return embedding;
         }
         throw new AssertionError("unreachable");
     }
 
+    private static EmbeddingAttemptGate.Permit acquire(EmbeddingAttemptGate gate) throws IOException {
+        if (gate == null) return null;
+        java.util.Optional<EmbeddingAttemptGate.Permit> permit = gate.acquire();
+        if (!permit.isPresent()) throw new EmbeddingAttemptDeniedException();
+        return permit.get();
+    }
+
+    private static void settle(EmbeddingAttemptGate.Permit permit, EmbeddingAttemptGate.Outcome outcome) throws IOException {
+        if (permit != null) permit.settle(outcome);
+    }
+
     private static boolean isTransient(IOException failure) {
+        if (failure instanceof EmbeddingAttemptDeniedException || failure instanceof EmbeddingAttemptStaleException) return false;
         if (!(failure instanceof OpenAiEmbeddingHttpException)) return true;
         int status = ((OpenAiEmbeddingHttpException) failure).getStatusCode();
         return status == 429 || status >= 500;

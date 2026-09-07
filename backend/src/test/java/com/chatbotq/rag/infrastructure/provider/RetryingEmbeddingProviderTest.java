@@ -1,6 +1,8 @@
 package com.chatbotq.rag.infrastructure.provider;
 
+import com.chatbotq.rag.application.model.EmbeddingAttemptGate;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
+import com.chatbotq.rag.application.model.EmbeddingRequest;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -8,6 +10,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,6 +18,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RetryingEmbeddingProviderTest {
+    @Test
+    void reservesAndSettlesEachOutboundAttemptIncludingRetry() throws Exception {
+        RecordingProvider delegate = new RecordingProvider(new OpenAiEmbeddingHttpException(429), vector());
+        RecordingAttemptGate gate = new RecordingAttemptGate();
+        RetryingEmbeddingProvider provider = new RetryingEmbeddingProvider(delegate, new RecordingSleeper(), 2, 1L, 1L);
+
+        assertArrayEquals(vector(), provider.embed(new EmbeddingRequest("hours", gate)));
+        assertEquals(2, gate.acquireCalls);
+        assertEquals(Arrays.asList(EmbeddingAttemptGate.Outcome.FAILURE, EmbeddingAttemptGate.Outcome.SUCCESS), gate.outcomes);
+        assertEquals(2, delegate.calls);
+    }
+
     @Test
     void retriesRateLimitedFailureWithCappedExponentialBackoff() throws Exception {
         RecordingProvider delegate = new RecordingProvider(
@@ -123,6 +138,17 @@ class RetryingEmbeddingProviderTest {
         float[] values = new float[1536];
         values[0] = 0.5f;
         return values;
+    }
+
+    private static final class RecordingAttemptGate implements EmbeddingAttemptGate {
+        private int acquireCalls;
+        private final List<Outcome> outcomes = new ArrayList<>();
+
+        @Override
+        public Optional<Permit> acquire() {
+            acquireCalls++;
+            return Optional.of(outcomes::add);
+        }
     }
 
     private static final class RecordingProvider implements EmbeddingProvider {

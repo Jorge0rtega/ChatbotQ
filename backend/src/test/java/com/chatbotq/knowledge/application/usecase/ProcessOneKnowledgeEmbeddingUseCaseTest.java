@@ -92,7 +92,7 @@ class ProcessOneKnowledgeEmbeddingUseCaseTest {
     }
 
     private static EmbeddingBudgetReservationPort acceptingReservations() {
-        return claim -> EmbeddingBudgetReservationPort.Decision.RESERVED;
+        return claim -> EmbeddingBudgetReservationPort.Reservation.of(EmbeddingBudgetReservationPort.Decision.RESERVED);
     }
 
     private static float[] vector() {
@@ -125,9 +125,9 @@ class ProcessOneKnowledgeEmbeddingUseCaseTest {
         }
 
         @Override
-        public Decision reserve(ClaimedKnowledgeEmbedding claim) {
+        public Reservation reserve(ClaimedKnowledgeEmbedding claim) {
             calls++;
-            return decision;
+            return Reservation.of(decision);
         }
     }
 

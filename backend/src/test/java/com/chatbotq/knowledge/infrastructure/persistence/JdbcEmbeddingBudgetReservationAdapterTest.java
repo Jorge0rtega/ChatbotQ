@@ -54,8 +54,8 @@ class JdbcEmbeddingBudgetReservationAdapterTest {
         ClaimedKnowledgeEmbedding claim = processingClaim(10);
         JdbcEmbeddingBudgetReservationAdapter reservations = adapter(2, 100, "1");
 
-        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(claim));
-        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(claim));
+        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(claim).getDecision());
+        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(claim).getDecision());
         assertEquals(1, jdbc.queryForObject("select count(*) from embedding_budget_reservation", Integer.class).intValue());
         assertEquals(new BigDecimal("0.00000020"), jdbc.queryForObject(
             "select reserved_cost_usd from embedding_budget_reservation", BigDecimal.class));
@@ -65,8 +65,8 @@ class JdbcEmbeddingBudgetReservationAdapterTest {
     void rejectsWhenDailyEntryCapacityIsAlreadyReserved() {
         JdbcEmbeddingBudgetReservationAdapter reservations = adapter(1, 100, "1");
 
-        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(1)));
-        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(1)));
+        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(1)).getDecision());
+        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(1)).getDecision());
         assertEquals(1, jdbc.queryForObject("select count(*) from embedding_budget_reservation", Integer.class).intValue());
     }
 
@@ -74,8 +74,8 @@ class JdbcEmbeddingBudgetReservationAdapterTest {
     void rejectsWhenDailyTokenCapacityIsAlreadyReserved() {
         JdbcEmbeddingBudgetReservationAdapter reservations = adapter(10, 10, "1");
 
-        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(7)));
-        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(4)));
+        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(7)).getDecision());
+        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(4)).getDecision());
         assertEquals(7L, jdbc.queryForObject("select sum(input_token_upper_bound) from embedding_budget_reservation", Long.class).longValue());
     }
 
@@ -83,8 +83,8 @@ class JdbcEmbeddingBudgetReservationAdapterTest {
     void rejectsWhenMonthlyHardCostCapacityIsAlreadyReserved() {
         JdbcEmbeddingBudgetReservationAdapter reservations = adapter(10, 200000000, "1.00000000");
 
-        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(50000000)));
-        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(1)));
+        assertEquals(EmbeddingBudgetReservationPort.Decision.RESERVED, reservations.reserve(processingClaim(50000000)).getDecision());
+        assertEquals(EmbeddingBudgetReservationPort.Decision.DENIED, reservations.reserve(processingClaim(1)).getDecision());
         assertEquals(new BigDecimal("1.00000000"), jdbc.queryForObject(
             "select sum(reserved_cost_usd) from embedding_budget_reservation", BigDecimal.class));
     }
@@ -155,7 +155,7 @@ class JdbcEmbeddingBudgetReservationAdapterTest {
 
     private static EmbeddingBudgetReservationPort.Decision reserveWhenReleased(JdbcEmbeddingBudgetReservationAdapter reservations,
             ClaimedKnowledgeEmbedding claim, CountDownLatch ready, CountDownLatch start) throws Exception {
-        ready.countDown(); start.await(5, TimeUnit.SECONDS); return reservations.reserve(claim);
+        ready.countDown(); start.await(5, TimeUnit.SECONDS); return reservations.reserve(claim).getDecision();
     }
 
     private JdbcEmbeddingBudgetReservationAdapter adapter(int entries, int tokens, String hardLimitUsd) {

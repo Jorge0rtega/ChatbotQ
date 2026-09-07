@@ -19,7 +19,7 @@ class ProcessOneKnowledgeEmbeddingCommandTest {
         RecordingProcessingPort processing = new RecordingProcessingPort();
         EmbeddingProvider provider = input -> vector();
         ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(processing,
-            claim -> EmbeddingBudgetReservationPort.Decision.RESERVED, provider);
+            claim -> EmbeddingBudgetReservationPort.Reservation.of(EmbeddingBudgetReservationPort.Decision.RESERVED), provider);
         ProcessOneKnowledgeEmbeddingCommand command = new ProcessOneKnowledgeEmbeddingCommand(
             useCase, new EmbeddingProcessingLimits(1, 4000, 100, 250000, 10, 20));
 
