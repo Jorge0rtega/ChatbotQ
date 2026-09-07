@@ -7,12 +7,12 @@ import com.chatbotq.knowledge.infrastructure.persistence.JdbcEmbeddingBudgetRese
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.infrastructure.configuration.EmbeddingProcessingLimits;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
 
 import java.math.BigDecimal;
 
@@ -25,11 +25,9 @@ import java.math.BigDecimal;
 public class ManualEmbeddingProcessingConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean(EmbeddingBudgetReservationPort.class)
-    @ConditionalOnBean(JdbcTemplate.class)
     @ConditionalOnProperty(prefix = "chatbotq.embedding.openai", name = "enabled", havingValue = "true")
-    EmbeddingBudgetReservationPort embeddingBudgetReservationPort(JdbcTemplate jdbc, EmbeddingProcessingLimits limits) {
-        return new JdbcEmbeddingBudgetReservationAdapter(jdbc, limits.getMaxEntriesPerDay(),
+    EmbeddingBudgetReservationPort embeddingBudgetReservationPort(DataSource dataSource, EmbeddingProcessingLimits limits) {
+        return new JdbcEmbeddingBudgetReservationAdapter(new JdbcTemplate(dataSource), limits.getMaxEntriesPerDay(),
             limits.getMaxInputTokensPerDay(), BigDecimal.valueOf(limits.getMonthlyHardLimitUsd()));
     }
 

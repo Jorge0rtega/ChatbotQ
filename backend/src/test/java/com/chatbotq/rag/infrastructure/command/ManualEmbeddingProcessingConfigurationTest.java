@@ -13,8 +13,12 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.util.Optional;
+
+import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -103,8 +107,14 @@ class ManualEmbeddingProcessingConfigurationTest {
         }
 
         @Bean
+        @Primary
         EmbeddingBudgetReservationPort testEmbeddingBudgetReservationPort() {
             return claim -> EmbeddingBudgetReservationPort.Reservation.of(EmbeddingBudgetReservationPort.Decision.RESERVED);
+        }
+
+        @Bean
+        DataSource dataSource() {
+            return new DriverManagerDataSource("jdbc:postgresql://localhost:1/chatbotq");
         }
 
         @Bean
