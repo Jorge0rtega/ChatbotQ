@@ -3,6 +3,7 @@ package com.chatbotq.rag.infrastructure.provider;
 import com.chatbotq.rag.application.model.EmbeddingAttemptDeniedException;
 import com.chatbotq.rag.application.model.EmbeddingAttemptGate;
 import com.chatbotq.rag.application.model.EmbeddingAttemptStaleException;
+import com.chatbotq.rag.application.model.EmbeddingAttemptSettlementUncertainException;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.application.model.EmbeddingRequest;
 import io.micrometer.core.instrument.Counter;
@@ -61,7 +62,7 @@ public final class RetryingEmbeddingProvider implements EmbeddingProvider {
             try {
                 embedding = delegate.embed(input);
             } catch (IOException failure) {
-                settle(permit, EmbeddingAttemptGate.Outcome.FAILURE);
+                settleFailure(permit, failure);
                 String category = category(failure);
                 if (attempt == maxAttempts || !isTransient(failure)) {
                     recordRequest("failure", startedAt);
@@ -76,8 +77,14 @@ public final class RetryingEmbeddingProvider implements EmbeddingProvider {
                 }
                 delayMs = nextDelay(delayMs);
                 continue;
+            } catch (RuntimeException failure) {
+                settleFailure(permit, failure);
+                throw failure;
+            } catch (Error failure) {
+                settleAfterError(permit, failure);
+                throw failure;
             }
-            settle(permit, EmbeddingAttemptGate.Outcome.SUCCESS);
+            settleSuccess(permit);
             recordRequest("success", startedAt);
             return embedding;
         }
@@ -95,8 +102,33 @@ public final class RetryingEmbeddingProvider implements EmbeddingProvider {
         if (permit != null) permit.settle(outcome);
     }
 
+    private static void settleAfterError(EmbeddingAttemptGate.Permit permit, Error failure) throws IOException {
+        try {
+            settle(permit, EmbeddingAttemptGate.Outcome.FAILURE);
+        } catch (IOException | RuntimeException | Error settlementFailure) {
+            throw new EmbeddingAttemptSettlementUncertainException(failure, settlementFailure);
+        }
+    }
+
+    private static void settleFailure(EmbeddingAttemptGate.Permit permit, Throwable providerFailure) throws IOException {
+        try {
+            settle(permit, EmbeddingAttemptGate.Outcome.FAILURE);
+        } catch (IOException | RuntimeException | Error settlementFailure) {
+            throw new EmbeddingAttemptSettlementUncertainException(providerFailure, settlementFailure);
+        }
+    }
+
+    private static void settleSuccess(EmbeddingAttemptGate.Permit permit) throws IOException {
+        try {
+            settle(permit, EmbeddingAttemptGate.Outcome.SUCCESS);
+        } catch (IOException | RuntimeException | Error settlementFailure) {
+            throw new EmbeddingAttemptSettlementUncertainException(null, settlementFailure);
+        }
+    }
+
     private static boolean isTransient(IOException failure) {
-        if (failure instanceof EmbeddingAttemptDeniedException || failure instanceof EmbeddingAttemptStaleException) return false;
+        if (failure instanceof EmbeddingAttemptDeniedException || failure instanceof EmbeddingAttemptStaleException
+            || failure instanceof EmbeddingAttemptSettlementUncertainException) return false;
         if (!(failure instanceof OpenAiEmbeddingHttpException)) return true;
         int status = ((OpenAiEmbeddingHttpException) failure).getStatusCode();
         return status == 429 || status >= 500;

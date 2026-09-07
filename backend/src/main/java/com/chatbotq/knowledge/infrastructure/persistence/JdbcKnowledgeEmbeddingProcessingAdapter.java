@@ -45,7 +45,7 @@ public class JdbcKnowledgeEmbeddingProcessingAdapter implements KnowledgeEmbeddi
     public boolean recordProviderAttempt(ClaimedKnowledgeEmbedding claim) {
         if (claim == null) throw new IllegalArgumentException("claim must not be null");
         return jdbc.update("update knowledge_entry set embedding_attempt_count=embedding_attempt_count+1,"
-                + "embedding_last_attempt_at=clock_timestamp(),updated_at=current_timestamp "
+                + "embedding_last_attempt_at=clock_timestamp(),embedding_processing_lease_expires_at=clock_timestamp()+interval '5 minutes',updated_at=current_timestamp "
                 + "where id=? and embedding_revision=? and embedding_status='PROCESSING' and embedding_processing_claim_token=? "
                 + "and embedding_processing_lease_expires_at>clock_timestamp()",
             claim.getEntryId(), claim.getEmbeddingRevision(), claim.getClaimToken()) == 1;

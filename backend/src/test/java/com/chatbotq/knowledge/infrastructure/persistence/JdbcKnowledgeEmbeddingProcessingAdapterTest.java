@@ -71,8 +71,10 @@ class JdbcKnowledgeEmbeddingProcessingAdapterTest {
         assertEquals("PROCESSING", jdbc.queryForObject("select embedding_status from knowledge_entry where id=?", String.class, entryId));
         assertEquals(0, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
         assertEquals(null, jdbc.queryForObject("select embedding_last_attempt_at from knowledge_entry where id=?", Object.class, entryId));
+        jdbc.update("update knowledge_entry set embedding_processing_lease_expires_at=clock_timestamp()+interval '1 minute' where id=?", entryId);
         assertTrue(processing.recordProviderAttempt(claimed.get()));
-        assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId).intValue());
+        assertTrue(jdbc.queryForObject("select embedding_processing_lease_expires_at>clock_timestamp()+interval '4 minutes' from knowledge_entry where id=?", Boolean.class, entryId));
+        assertEquals(1, jdbc.queryForObject("select embedding_attempt_count from knowledge_entry where id=?", Integer.class, entryId));
         assertTrue(jdbc.queryForObject("select embedding_last_attempt_at is not null from knowledge_entry where id=?", Boolean.class, entryId));
     }
 

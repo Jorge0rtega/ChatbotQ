@@ -33,6 +33,57 @@ class ProcessOneKnowledgeEmbeddingUseCaseTest {
     }
 
     @Test
+    void leavesClaimProcessingWhenErrorFailureSettlementIsUncertain() {
+        ClaimedKnowledgeEmbedding claim = new ClaimedKnowledgeEmbedding(UUID.randomUUID(), 3L, "Where are you located?");
+        RecordingProcessingPort processing = new RecordingProcessingPort(Optional.of(claim));
+        EmbeddingProvider provider = input -> { throw new AssertionError("transport corruption"); };
+        EmbeddingBudgetReservationPort reservations = new EmbeddingBudgetReservationPort() {
+            @Override public Reservation reserve(ClaimedKnowledgeEmbedding ignored) { return Reservation.of(Decision.RESERVED); }
+            @Override public void settle(Reservation ignored, Settlement settlement) { throw new IllegalStateException("ledger unavailable"); }
+        };
+
+        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(processing, reservations, provider);
+
+        assertEquals(ProcessOneKnowledgeEmbeddingUseCase.Result.UNCERTAIN, useCase.processOne());
+        assertEquals(0, processing.failedCalls);
+        assertEquals(null, processing.readyClaim);
+    }
+
+    @Test
+    void leavesClaimProcessingWhenSuccessSettlementIsUncertain() {
+        ClaimedKnowledgeEmbedding claim = new ClaimedKnowledgeEmbedding(UUID.randomUUID(), 3L, "Where are you located?");
+        RecordingProcessingPort processing = new RecordingProcessingPort(Optional.of(claim));
+        EmbeddingBudgetReservationPort reservations = new EmbeddingBudgetReservationPort() {
+            @Override public Reservation reserve(ClaimedKnowledgeEmbedding ignored) { return Reservation.of(Decision.RESERVED); }
+            @Override public void settle(Reservation ignored, Settlement settlement) { throw new IllegalStateException("ledger unavailable"); }
+        };
+
+        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(
+            processing, reservations, new RecordingEmbeddingProvider(vector()));
+
+        assertEquals(ProcessOneKnowledgeEmbeddingUseCase.Result.UNCERTAIN, useCase.processOne());
+        assertEquals(0, processing.failedCalls);
+        assertEquals(null, processing.readyClaim);
+    }
+
+    @Test
+    void leavesClaimProcessingWhenPostEgressSettlementIsUncertain() {
+        ClaimedKnowledgeEmbedding claim = new ClaimedKnowledgeEmbedding(UUID.randomUUID(), 3L, "Where are you located?");
+        RecordingProcessingPort processing = new RecordingProcessingPort(Optional.of(claim));
+        EmbeddingProvider provider = input -> { throw new IOException("provider failed after egress"); };
+        EmbeddingBudgetReservationPort reservations = new EmbeddingBudgetReservationPort() {
+            @Override public Reservation reserve(ClaimedKnowledgeEmbedding ignored) { return Reservation.of(Decision.RESERVED); }
+            @Override public void settle(Reservation ignored, Settlement settlement) { throw new IllegalStateException("ledger unavailable"); }
+        };
+
+        ProcessOneKnowledgeEmbeddingUseCase useCase = new ProcessOneKnowledgeEmbeddingUseCase(processing, reservations, provider);
+
+        assertEquals(ProcessOneKnowledgeEmbeddingUseCase.Result.UNCERTAIN, useCase.processOne());
+        assertEquals(0, processing.failedCalls);
+        assertEquals(null, processing.readyClaim);
+    }
+
+    @Test
     void mapsProviderIoFailureToTheFixedSafeDiagnosticAndMarksTheClaimFailed() throws Exception {
         ClaimedKnowledgeEmbedding claim = new ClaimedKnowledgeEmbedding(UUID.randomUUID(), 3L, "Where are you located?");
         RecordingProcessingPort processing = new RecordingProcessingPort(Optional.of(claim));

@@ -7,6 +7,7 @@ import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.rag.application.model.EmbeddingAttemptDeniedException;
 import com.chatbotq.rag.application.model.EmbeddingAttemptGate;
 import com.chatbotq.rag.application.model.EmbeddingAttemptStaleException;
+import com.chatbotq.rag.application.model.EmbeddingAttemptSettlementUncertainException;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.application.model.EmbeddingRequest;
 
@@ -40,6 +41,8 @@ public final class ProcessOneKnowledgeEmbeddingUseCase {
             return markFailed(claim.get(), "EMBEDDING_BUDGET_LIMIT_REACHED", "Embedding budget limit reached");
         } catch (EmbeddingAttemptStaleException stale) {
             return Result.STALE;
+        } catch (EmbeddingAttemptSettlementUncertainException uncertain) {
+            return Result.UNCERTAIN;
         } catch (Exception providerFailure) {
             return markFailed(claim.get(), "PROVIDER_FAILURE", "Embedding generation failed");
         }
@@ -72,5 +75,5 @@ public final class ProcessOneKnowledgeEmbeddingUseCase {
         return true;
     }
 
-    public enum Result { NO_PENDING, READY, FAILED, STALE }
+    public enum Result { NO_PENDING, READY, FAILED, STALE, UNCERTAIN }
 }

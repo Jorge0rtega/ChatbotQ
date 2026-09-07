@@ -1,6 +1,7 @@
 package com.chatbotq.rag.infrastructure.provider;
 
 import com.chatbotq.rag.application.model.EmbeddingAttemptGate;
+import com.chatbotq.rag.application.model.EmbeddingAttemptSettlementUncertainException;
 import com.chatbotq.rag.application.port.EmbeddingProvider;
 import com.chatbotq.rag.application.model.EmbeddingRequest;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -18,6 +19,41 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RetryingEmbeddingProviderTest {
+    @Test
+    void doesNotRetryWhenFailureSettlementIsUncertain() {
+        RecordingProvider delegate = new RecordingProvider(new IOException("network unavailable"));
+        RecordingSleeper sleeper = new RecordingSleeper();
+        EmbeddingAttemptGate gate = () -> Optional.of(outcome -> { throw new IOException("ledger unavailable"); });
+        RetryingEmbeddingProvider provider = new RetryingEmbeddingProvider(delegate, sleeper, 2, 1L, 1L);
+
+        assertThrows(EmbeddingAttemptSettlementUncertainException.class,
+            () -> provider.embed(new EmbeddingRequest("hours", gate)));
+        assertEquals(1, delegate.calls);
+        assertEquals(0, sleeper.delays.size());
+    }
+
+    @Test
+    void settlesFailureBeforePropagatingAnUnexpectedRuntimeException() {
+        RecordingProvider delegate = new RecordingProvider(new IllegalStateException("transport bug"));
+        RecordingAttemptGate gate = new RecordingAttemptGate();
+        RetryingEmbeddingProvider provider = new RetryingEmbeddingProvider(delegate, new RecordingSleeper(), 2, 1L, 1L);
+
+        assertThrows(RuntimeException.class, () -> provider.embed(new EmbeddingRequest("hours", gate)));
+        assertEquals(Arrays.asList(EmbeddingAttemptGate.Outcome.FAILURE), gate.outcomes);
+        assertEquals(1, delegate.calls);
+    }
+
+    @Test
+    void settlesFailureBeforePropagatingAnErrorAfterPotentialEgress() {
+        RecordingProvider delegate = new RecordingProvider(new AssertionError("transport corruption"));
+        RecordingAttemptGate gate = new RecordingAttemptGate();
+        RetryingEmbeddingProvider provider = new RetryingEmbeddingProvider(delegate, new RecordingSleeper(), 2, 1L, 1L);
+
+        assertThrows(AssertionError.class, () -> provider.embed(new EmbeddingRequest("hours", gate)));
+        assertEquals(Arrays.asList(EmbeddingAttemptGate.Outcome.FAILURE), gate.outcomes);
+        assertEquals(1, delegate.calls);
+    }
+
     @Test
     void reservesAndSettlesEachOutboundAttemptIncludingRetry() throws Exception {
         RecordingProvider delegate = new RecordingProvider(new OpenAiEmbeddingHttpException(429), vector());
@@ -164,6 +200,8 @@ class RetryingEmbeddingProviderTest {
             calls++;
             Object outcome = outcomes.remove(0);
             if (outcome instanceof IOException) throw (IOException) outcome;
+            if (outcome instanceof RuntimeException) throw (RuntimeException) outcome;
+            if (outcome instanceof Error) throw (Error) outcome;
             return (float[]) outcome;
         }
     }
