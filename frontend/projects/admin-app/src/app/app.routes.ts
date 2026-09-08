@@ -25,6 +25,11 @@ export const routes: Routes = [
           import('./features/projects.component').then((module) => module.ProjectsComponent),
       },
       {
+        path: 'knowledge',
+        loadComponent: () =>
+          import('./features/knowledge.component').then((module) => module.KnowledgeComponent),
+      },
+      {
         path: 'users',
         canActivate: [generalAdminGuard],
         loadComponent: () =>

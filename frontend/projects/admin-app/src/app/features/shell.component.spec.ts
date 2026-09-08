@@ -34,6 +34,10 @@ describe('ShellComponent role navigation', () => {
     fixture.detectChanges();
   });
 
+  it('shows knowledge navigation for every authenticated administrator', () => {
+    expect(fixture.nativeElement.textContent).toContain('Conocimiento');
+  });
+
   it('hides global user navigation for PROJECT_ADMIN', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Usuarios');
   });

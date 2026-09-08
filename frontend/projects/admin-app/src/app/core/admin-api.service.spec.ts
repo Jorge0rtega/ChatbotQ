@@ -41,6 +41,21 @@ describe('AdminApiService contracts', () => {
     expect(http.expectOne('/api/admin/projects/p1/deactivate').request.method).toBe('POST');
   });
 
+  it('uses exact knowledge listing and retry contracts', () => {
+    api.listKnowledge('project id', 2, 10, 'hours').subscribe();
+    const list = http.expectOne(
+      (request) => request.url === '/api/admin/projects/project%20id/knowledge'
+        && request.params.get('page') === '2' && request.params.get('size') === '10'
+        && request.params.get('q') === 'hours',
+    );
+    expect(list.request.method).toBe('GET');
+
+    api.retryKnowledgeEmbedding('project id', 'entry id', 7).subscribe();
+    const retry = http.expectOne('/api/admin/projects/project%20id/knowledge/entry%20id/embedding-retry');
+    expect(retry.request.method).toBe('POST');
+    expect(retry.request.body).toEqual({ version: 7 });
+  });
+
   it('uses exact user-project assignment URLs, verbs and body', () => {
     api.getUserProjectIds('u1').subscribe();
     const get = http.expectOne('/api/admin/users/u1/projects');

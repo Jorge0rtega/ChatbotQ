@@ -56,3 +56,23 @@ export interface CreateUserRequest {
   temporaryPassword: string;
   role: AdminRole;
 }
+
+export type KnowledgeEmbeddingStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
+
+export interface KnowledgeEntry {
+  id: string;
+  projectId: string;
+  question: string;
+  answer: string;
+  externalId: string | null;
+  active: boolean;
+  embeddingStatus: KnowledgeEmbeddingStatus;
+  embeddingRevision: number;
+  embeddingAttemptCount: number;
+  embeddingLastAttemptAt: string | null;
+  embeddingLastErrorCode: string | null;
+  embeddingLastErrorMessage: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -50,6 +50,7 @@ export class ShellComponent implements OnInit {
   readonly loggingOut = signal(false);
   readonly navigation = [
     { label: 'Proyectos', route: '/projects', visible: () => true },
+    { label: 'Conocimiento', route: '/knowledge', visible: () => true },
     { label: 'Usuarios', route: '/users', visible: () => this.session.me()?.generalAdmin === true },
   ];
 

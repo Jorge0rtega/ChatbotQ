@@ -5,6 +5,7 @@ import {
   AdminRole,
   AdminUser,
   CreateUserRequest,
+  KnowledgeEntry,
   PageResponse,
   Project,
   ProjectIdsResponse,
@@ -75,6 +76,21 @@ export class AdminApiService {
     return this.http.post<void>(
       `/api/admin/projects/${id}/${active ? 'activate' : 'deactivate'}`,
       {},
+    );
+  }
+
+  listKnowledge(projectId: string, page = 0, size = 20, query?: string): Observable<PageResponse<KnowledgeEntry>> {
+    let params = this.pageParams(page, size);
+    if (query !== undefined && query !== '') params = params.set('q', query);
+    return this.http.get<PageResponse<KnowledgeEntry>>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge`, { params },
+    );
+  }
+
+  retryKnowledgeEmbedding(projectId: string, entryId: string, version: number): Observable<KnowledgeEntry> {
+    return this.http.post<KnowledgeEntry>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(entryId)}/embedding-retry`,
+      { version },
     );
   }
 
