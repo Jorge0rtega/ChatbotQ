@@ -41,17 +41,62 @@ describe('AdminApiService contracts', () => {
     expect(http.expectOne('/api/admin/projects/p1/deactivate').request.method).toBe('POST');
   });
 
-  it('uses exact knowledge listing and retry contracts', () => {
+  it('uses exact knowledge editor contracts', () => {
     api.listKnowledge('project id', 2, 10, 'hours').subscribe();
     const list = http.expectOne(
-      (request) => request.url === '/api/admin/projects/project%20id/knowledge'
-        && request.params.get('page') === '2' && request.params.get('size') === '10'
-        && request.params.get('q') === 'hours',
+      (request) =>
+        request.url === '/api/admin/projects/project%20id/knowledge' &&
+        request.params.get('page') === '2' &&
+        request.params.get('size') === '10' &&
+        request.params.get('q') === 'hours',
     );
     expect(list.request.method).toBe('GET');
 
+    api.getKnowledge('project id', 'entry id').subscribe();
+    expect(
+      http.expectOne('/api/admin/projects/project%20id/knowledge/entry%20id').request.method,
+    ).toBe('GET');
+
+    api
+      .createKnowledge('project id', {
+        question: 'Pregunta',
+        answer: 'Respuesta',
+        externalId: 'external-1',
+        active: true,
+      })
+      .subscribe();
+    const create = http.expectOne('/api/admin/projects/project%20id/knowledge');
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toEqual({
+      question: 'Pregunta',
+      answer: 'Respuesta',
+      externalId: 'external-1',
+      active: true,
+    });
+
+    api
+      .updateKnowledge('project id', 'entry id', {
+        question: 'Editada',
+        answer: 'Nueva respuesta',
+        externalId: null,
+        active: false,
+        version: 7,
+      })
+      .subscribe();
+    const update = http.expectOne('/api/admin/projects/project%20id/knowledge/entry%20id');
+    expect(update.request.method).toBe('PUT');
+    expect(update.request.body).toEqual({
+      question: 'Editada',
+      answer: 'Nueva respuesta',
+      externalId: null,
+      active: false,
+      version: 7,
+    });
+
     api.retryKnowledgeEmbedding('project id', 'entry id', 7).subscribe();
-    const retry = http.expectOne('/api/admin/projects/project%20id/knowledge/entry%20id/embedding-retry');
+    const retry = http.expectOne(
+      '/api/admin/projects/project%20id/knowledge/entry%20id/embedding-retry',
+    );
     expect(retry.request.method).toBe('POST');
     expect(retry.request.body).toEqual({ version: 7 });
   });
@@ -117,7 +162,13 @@ describe('AdminApiService contracts', () => {
       .flush({ items: [project('p1')], page: 0, size: 100, totalElements: 2, totalPages: 2 });
     http
       .expectOne((request) => request.params.get('page') === '1')
-      .flush({ items: [project('duplicate')], page: 0, size: 100, totalElements: 3, totalPages: 3 });
+      .flush({
+        items: [project('duplicate')],
+        page: 0,
+        size: 100,
+        totalElements: 3,
+        totalPages: 3,
+      });
 
     expect(failed).toBe(true);
     expect(result).toBeUndefined();

@@ -14,7 +14,11 @@ const project = (id: string, name: string): Project => ({
   updatedAt: '2026-01-01T00:00:00Z',
 });
 
-const entry = (id: string, question: string, embeddingStatus: KnowledgeEntry['embeddingStatus']): KnowledgeEntry => ({
+const entry = (
+  id: string,
+  question: string,
+  embeddingStatus: KnowledgeEntry['embeddingStatus'],
+): KnowledgeEntry => ({
   id,
   projectId: 'p1',
   question,
@@ -43,12 +47,21 @@ const knowledgePage = (items: KnowledgeEntry[]): PageResponse<KnowledgeEntry> =>
 describe('KnowledgeComponent', () => {
   async function configure(
     overrides: Record<string, unknown> = {},
-    me: MeResponse | null = { userId: 'u1', email: 'admin@example.com', generalAdmin: true, projectIds: [] },
+    me: MeResponse | null = {
+      userId: 'u1',
+      email: 'admin@example.com',
+      generalAdmin: true,
+      projectIds: [],
+    },
   ) {
     const api = {
       listAllProjects: vi.fn(() => of([project('p1', 'Proyecto uno')])),
       getProject: vi.fn((id: string) => of(project(id, 'Proyecto uno'))),
       listKnowledge: vi.fn(() => of(knowledgePage([entry('k1', '¿Cuál es el horario?', 'READY')]))),
+      getKnowledge: vi.fn(() => of(entry('k1', '¿Cuál es el horario?', 'READY'))),
+      createKnowledge: vi.fn(() => of(entry('new', 'Pregunta nueva', 'PENDING'))),
+      updateKnowledge: vi.fn(() => of(entry('k1', '¿Cuál es el horario?', 'READY'))),
+      retryKnowledgeEmbedding: vi.fn(() => of(entry('k1', '¿Cuál es el horario?', 'PENDING'))),
       ...overrides,
     };
     const sessionMe = signal(me);
@@ -80,7 +93,12 @@ describe('KnowledgeComponent', () => {
     const { api, fixture, sessionMe } = await configure();
     fixture.detectChanges();
 
-    sessionMe.set({ userId: 'u1', email: 'renamed@example.com', generalAdmin: true, projectIds: [] });
+    sessionMe.set({
+      userId: 'u1',
+      email: 'renamed@example.com',
+      generalAdmin: true,
+      projectIds: [],
+    });
     fixture.detectChanges();
 
     expect(api.listAllProjects).toHaveBeenCalledTimes(1);
@@ -90,7 +108,10 @@ describe('KnowledgeComponent', () => {
   it('discards a superseded project discovery after a manual retry', async () => {
     const firstDiscovery = new Subject<readonly Project[]>();
     const { api, fixture } = await configure({
-      listAllProjects: vi.fn().mockReturnValueOnce(firstDiscovery).mockReturnValueOnce(of([project('p1', 'Proyecto actual')])),
+      listAllProjects: vi
+        .fn()
+        .mockReturnValueOnce(firstDiscovery)
+        .mockReturnValueOnce(of([project('p1', 'Proyecto actual')])),
     });
     fixture.detectChanges();
 
@@ -107,7 +128,10 @@ describe('KnowledgeComponent', () => {
     const { api, fixture } = await configure(
       {
         getProject: vi.fn((id: string) =>
-          of({ ...project(id, id === 'p1' ? 'Asignado activo' : 'Asignado inactivo'), status: id === 'p1' ? 'ACTIVE' : 'DISABLED' }),
+          of({
+            ...project(id, id === 'p1' ? 'Asignado activo' : 'Asignado inactivo'),
+            status: id === 'p1' ? 'ACTIVE' : 'DISABLED',
+          }),
         ),
       },
       { userId: 'u1', email: 'project@example.com', generalAdmin: false, projectIds: ['p1', 'p2'] },
@@ -132,7 +156,13 @@ describe('KnowledgeComponent', () => {
     const { api, fixture } = await configure({
       listKnowledge: vi
         .fn()
-        .mockReturnValueOnce(of({ ...knowledgePage([entry('k1', 'Primera página', 'READY')]), totalElements: 21, totalPages: 2 }))
+        .mockReturnValueOnce(
+          of({
+            ...knowledgePage([entry('k1', 'Primera página', 'READY')]),
+            totalElements: 21,
+            totalPages: 2,
+          }),
+        )
         .mockReturnValueOnce(of(secondPage)),
     });
     fixture.detectChanges();
@@ -153,9 +183,9 @@ describe('KnowledgeComponent', () => {
     expect(api.listKnowledge).toHaveBeenCalledExactlyOnceWith('p1', 0, 20, undefined);
     expect(fixture.nativeElement.textContent).toContain('¿Cuál es el horario?');
     expect(fixture.nativeElement.textContent).toContain('Listo');
-    expect((fixture.nativeElement.querySelector('#knowledge-search') as HTMLInputElement).placeholder).toBe(
-      'Pregunta o ID externo',
-    );
+    expect(
+      (fixture.nativeElement.querySelector('#knowledge-search') as HTMLInputElement).placeholder,
+    ).toBe('Pregunta o ID externo');
   });
 
   it('shows an accessible project-load failure without an empty selector and retries it', async () => {
@@ -218,10 +248,210 @@ describe('KnowledgeComponent', () => {
     expect(api.listKnowledge).toHaveBeenCalledExactlyOnceWith('p1', 0, 20, 'horario');
   });
 
+  it('opens a focused create editor and submits the complete create contract', async () => {
+    const created = entry('new', 'Pregunta nueva', 'PENDING');
+    const { api, fixture } = await configure({ createKnowledge: vi.fn(() => of(created)) });
+    fixture.detectChanges();
+
+    const create = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Nueva entrada',
+    ) as HTMLButtonElement;
+    create.click();
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('#knowledge-question'));
+    fixture.componentInstance.editorForm.setValue({
+      question: 'Pregunta nueva',
+      answer: 'Respuesta nueva',
+      externalId: ' ext-1 ',
+      active: true,
+    });
+    fixture.componentInstance.saveEditor();
+    fixture.detectChanges();
+
+    expect(api.createKnowledge).toHaveBeenCalledWith('p1', {
+      question: 'Pregunta nueva',
+      answer: 'Respuesta nueva',
+      externalId: 'ext-1',
+      active: true,
+    });
+    expect(fixture.componentInstance.editorEntry()).toEqual(created);
+    expect(fixture.nativeElement.querySelector('[aria-live="polite"]').textContent).toContain(
+      'creada',
+    );
+  });
+
+  it('views a selected entry, edits it with its CAS version, and restores focus on close', async () => {
+    const original = entry('k1', 'Original', 'READY');
+    const updated = { ...original, question: 'Editada', answer: 'Respuesta editada', version: 2 };
+    const { api, fixture } = await configure({
+      getKnowledge: vi.fn(() => of(original)),
+      updateKnowledge: vi.fn(() => of(updated)),
+    });
+    fixture.detectChanges();
+    const trigger = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Ver',
+    ) as HTMLButtonElement;
+    trigger.click();
+    fixture.detectChanges();
+
+    expect(api.getKnowledge).toHaveBeenCalledWith('p1', 'k1');
+    expect(fixture.nativeElement.textContent).toContain('Respuesta');
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Editar')!
+      .click();
+    fixture.componentInstance.editorForm.setValue({
+      question: 'Editada',
+      answer: 'Respuesta editada',
+      externalId: '',
+      active: true,
+    });
+    fixture.componentInstance.saveEditor();
+    fixture.detectChanges();
+
+    expect(api.updateKnowledge).toHaveBeenCalledWith('p1', 'k1', {
+      question: 'Editada',
+      answer: 'Respuesta editada',
+      externalId: null,
+      active: true,
+      version: 1,
+    });
+    fixture.componentInstance.closeEditor();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('updates active state through the full CAS update contract', async () => {
+    const original = entry('k1', 'Original', 'READY');
+    const { api, fixture } = await configure({ getKnowledge: vi.fn(() => of(original)) });
+    fixture.detectChanges();
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Ver')!
+      .click();
+    fixture.detectChanges();
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Desactivar')!
+      .click();
+
+    expect(api.updateKnowledge).toHaveBeenCalledWith('p1', 'k1', {
+      question: 'Original',
+      answer: 'Respuesta',
+      externalId: null,
+      active: false,
+      version: 1,
+    });
+  });
+
+  it('shows the embedding retry affordance only for FAILED entries and sends the CAS version', async () => {
+    const failed = entry('failed', 'Fallida', 'FAILED');
+    const { api, fixture } = await configure({
+      getKnowledge: vi
+        .fn()
+        .mockReturnValueOnce(of(failed))
+        .mockReturnValueOnce(of(entry('k1', 'Lista', 'READY'))),
+    });
+    fixture.detectChanges();
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Ver')!
+      .click();
+    fixture.detectChanges();
+
+    const retry = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Reintentar embedding',
+    ) as HTMLButtonElement;
+    expect(retry).toBeTruthy();
+    retry.click();
+    expect(api.retryKnowledgeEmbedding).toHaveBeenCalledWith('p1', 'failed', 1);
+
+    fixture.componentInstance.closeEditor();
+    fixture.componentInstance.openEntry('k1', fixture.nativeElement.querySelector('button'));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('Reintentar embedding');
+  });
+
+  it('clears stale editor data and announces a conflict or failure', async () => {
+    const original = entry('k1', 'Original', 'READY');
+    const { fixture } = await configure({
+      getKnowledge: vi.fn(() => of(original)),
+      updateKnowledge: vi.fn(() => throwError(() => ({ status: 409 }))),
+    });
+    fixture.detectChanges();
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Ver')!
+      .click();
+    fixture.detectChanges();
+    fixture.componentInstance.editEntry();
+    fixture.componentInstance.saveEditor();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.editorEntry()).toBeNull();
+    expect(fixture.componentInstance.editorError()).toContain('cambió en otra sesión');
+    expect(fixture.nativeElement.querySelector('[aria-live="assertive"]').textContent).toContain(
+      'cambió en otra sesión',
+    );
+  });
+
+  it('clears sensitive create values and announces a non-conflict save failure', async () => {
+    const { fixture } = await configure({
+      createKnowledge: vi.fn(() => throwError(() => ({ status: 500 }))),
+    });
+    fixture.detectChanges();
+    fixture.componentInstance.openCreate(fixture.nativeElement.querySelector('button'));
+    fixture.componentInstance.editorForm.setValue({
+      question: 'No conservar',
+      answer: 'Respuesta privada',
+      externalId: 'secreto',
+      active: true,
+    });
+    fixture.componentInstance.saveEditor();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.editorEntry()).toBeNull();
+    expect(fixture.componentInstance.editorForm.getRawValue()).toEqual({
+      question: '',
+      answer: '',
+      externalId: '',
+      active: true,
+    });
+    expect(fixture.nativeElement.querySelector('[aria-live="assertive"]').textContent).not.toBe('');
+  });
+
+  it('closes an abandoned create editor instead of exposing an invalid edit state', async () => {
+    const { fixture } = await configure();
+    fixture.detectChanges();
+    fixture.componentInstance.openCreate(fixture.nativeElement.querySelector('button'));
+    fixture.componentInstance.cancelEditorEdit();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.editorMode()).toBeNull();
+    expect(fixture.nativeElement.querySelector('#knowledge-question')).toBeNull();
+  });
+
+  it('cancels a superseded detail request so its late response cannot repopulate the editor', async () => {
+    const first = new Subject<KnowledgeEntry>();
+    const second = new Subject<KnowledgeEntry>();
+    const { fixture } = await configure({
+      getKnowledge: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
+    });
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    fixture.componentInstance.openEntry('old', trigger);
+    fixture.componentInstance.openEntry('new', trigger);
+    first.next(entry('old', 'Secreto tardío', 'READY'));
+    second.next(entry('new', 'Actual', 'READY'));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Actual');
+    expect(fixture.nativeElement.textContent).not.toContain('Secreto tardío');
+  });
+
   it('discards a late result when a newer project selection supersedes it', async () => {
     const first = new Subject<PageResponse<KnowledgeEntry>>();
     const { api, fixture } = await configure({
-      listAllProjects: vi.fn(() => of([project('p1', 'Proyecto uno'), project('p2', 'Proyecto dos')])),
+      listAllProjects: vi.fn(() =>
+        of([project('p1', 'Proyecto uno'), project('p2', 'Proyecto dos')]),
+      ),
       listKnowledge: vi.fn((projectId: string) =>
         projectId === 'p1' ? first : of(knowledgePage([entry('k2', 'Pregunta dos', 'FAILED')])),
       ),

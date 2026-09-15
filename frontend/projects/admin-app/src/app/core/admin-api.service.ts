@@ -4,12 +4,14 @@ import { EMPTY, expand, map, Observable, reduce } from 'rxjs';
 import {
   AdminRole,
   AdminUser,
+  CreateKnowledgeRequest,
   CreateUserRequest,
   KnowledgeEntry,
   PageResponse,
   Project,
   ProjectIdsResponse,
   ProjectSiteKey,
+  UpdateKnowledgeRequest,
 } from './models';
 
 const MAX_PROJECT_PAGES = 1000;
@@ -79,15 +81,49 @@ export class AdminApiService {
     );
   }
 
-  listKnowledge(projectId: string, page = 0, size = 20, query?: string): Observable<PageResponse<KnowledgeEntry>> {
+  listKnowledge(
+    projectId: string,
+    page = 0,
+    size = 20,
+    query?: string,
+  ): Observable<PageResponse<KnowledgeEntry>> {
     let params = this.pageParams(page, size);
     if (query !== undefined && query !== '') params = params.set('q', query);
     return this.http.get<PageResponse<KnowledgeEntry>>(
-      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge`, { params },
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge`,
+      { params },
     );
   }
 
-  retryKnowledgeEmbedding(projectId: string, entryId: string, version: number): Observable<KnowledgeEntry> {
+  getKnowledge(projectId: string, entryId: string): Observable<KnowledgeEntry> {
+    return this.http.get<KnowledgeEntry>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(entryId)}`,
+    );
+  }
+
+  createKnowledge(projectId: string, body: CreateKnowledgeRequest): Observable<KnowledgeEntry> {
+    return this.http.post<KnowledgeEntry>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge`,
+      body,
+    );
+  }
+
+  updateKnowledge(
+    projectId: string,
+    entryId: string,
+    body: UpdateKnowledgeRequest,
+  ): Observable<KnowledgeEntry> {
+    return this.http.put<KnowledgeEntry>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(entryId)}`,
+      body,
+    );
+  }
+
+  retryKnowledgeEmbedding(
+    projectId: string,
+    entryId: string,
+    version: number,
+  ): Observable<KnowledgeEntry> {
     return this.http.post<KnowledgeEntry>(
       `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(entryId)}/embedding-retry`,
       { version },
@@ -95,7 +131,9 @@ export class AdminApiService {
   }
 
   getProjectSiteKey(projectId: string): Observable<ProjectSiteKey> {
-    return this.http.get<ProjectSiteKey>(`/api/admin/projects/${encodeURIComponent(projectId)}/site-key`);
+    return this.http.get<ProjectSiteKey>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/site-key`,
+    );
   }
 
   rotateProjectSiteKey(projectId: string, expectedVersion: number): Observable<ProjectSiteKey> {

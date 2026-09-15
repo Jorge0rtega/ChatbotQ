@@ -59,6 +59,17 @@ export interface CreateUserRequest {
 
 export type KnowledgeEmbeddingStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
 
+export interface CreateKnowledgeRequest {
+  question: string;
+  answer: string;
+  externalId: string | null;
+  active: boolean;
+}
+
+export interface UpdateKnowledgeRequest extends CreateKnowledgeRequest {
+  version: number;
+}
+
 export interface KnowledgeEntry {
   id: string;
   projectId: string;
