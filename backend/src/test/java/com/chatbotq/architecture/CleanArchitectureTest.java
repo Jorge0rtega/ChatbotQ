@@ -21,7 +21,8 @@ class CleanArchitectureTest {
             "..infrastructure..",
             "..web..",
             "org.springframework..",
-            "javax.servlet.."
+            "javax.servlet..",
+            "org.apache.commons.csv.."
         );
 
     @ArchTest

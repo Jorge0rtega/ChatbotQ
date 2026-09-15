@@ -27,9 +27,12 @@ import com.chatbotq.infrastructure.identity.UuidAdminUserIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidKnowledgeEntryIdentityGenerator;
 import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
+import com.chatbotq.knowledge.application.port.KnowledgeCsvPreviewPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
+import com.chatbotq.knowledge.application.usecase.CsvKnowledgePreviewUseCase;
+import com.chatbotq.knowledge.infrastructure.csv.ApacheCommonsCsvKnowledgeParser;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
@@ -92,6 +95,19 @@ public class IdentityProjectInfrastructureConfiguration {
                                                            Clock clock,
                                                            @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
         return new AdministerKnowledgeUseCase(entries, identities, clock, maxInputTokensPerEntry);
+    }
+
+    @Bean
+    ApacheCommonsCsvKnowledgeParser knowledgeCsvParser(
+        @Value("${chatbotq.knowledge.csv.max-raw-bytes:1048576}") int maxRawBytes,
+        @Value("${chatbotq.knowledge.csv.max-data-rows:1000}") int maxDataRows) {
+        return new ApacheCommonsCsvKnowledgeParser(maxRawBytes, maxDataRows);
+    }
+
+    @Bean
+    KnowledgeCsvPreviewPort knowledgeCsvPreviewPort(ApacheCommonsCsvKnowledgeParser parser,
+        @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
+        return new CsvKnowledgePreviewUseCase(parser, maxInputTokensPerEntry);
     }
 
     @Bean

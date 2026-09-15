@@ -4,6 +4,7 @@ import com.chatbotq.ChatbotQApplication;
 import com.chatbotq.identityaccess.application.usecase.AdministerUserProjectAssignmentsUseCase;
 import com.chatbotq.identityaccess.application.usecase.CreateAdminUserUseCase;
 import com.chatbotq.identityaccess.domain.AdminUser;
+import com.chatbotq.knowledge.application.port.KnowledgeCsvPreviewPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 
 import com.chatbotq.projects.application.usecase.AddAllowedOriginUseCase;
@@ -65,6 +66,9 @@ class IdentityProjectInfrastructureConfigurationTest {
     private KnowledgeEmbeddingProcessingPort embeddingProcessing;
 
     @Autowired
+    private KnowledgeCsvPreviewPort csvPreview;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @Test
@@ -82,6 +86,7 @@ class IdentityProjectInfrastructureConfigurationTest {
 
         assertTrue(user.getPasswordHash().startsWith("$2"));
         assertTrue(embeddingProcessing.getClass().getName().contains("JdbcKnowledgeEmbeddingProcessingAdapter"));
+        assertTrue(csvPreview.getClass().getName().contains("CsvKnowledgePreviewUseCase"));
         assertEquals(1, jdbc.queryForObject(
             "select count(*) from project where id = ?", Integer.class, project.getId()));
         assertEquals("https://example.com", jdbc.queryForObject(
