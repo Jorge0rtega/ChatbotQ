@@ -39,7 +39,7 @@ import { SessionService } from '../core/session.service';
         }
       </header>
       <p class="success" aria-live="polite">{{ feedback() }}</p>
-      <p class="alert" aria-live="assertive">{{ mutationError() }}</p>
+      <p class="alert">{{ mutationError() }}</p>
 
       @if (projectsLoading()) {
         <p class="state" aria-live="polite">Cargando proyectos…</p>

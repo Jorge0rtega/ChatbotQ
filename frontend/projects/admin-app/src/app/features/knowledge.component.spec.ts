@@ -387,9 +387,11 @@ describe('KnowledgeComponent', () => {
 
     expect(fixture.componentInstance.editorEntry()).toBeNull();
     expect(fixture.componentInstance.editorError()).toContain('cambió en otra sesión');
-    expect(fixture.nativeElement.querySelector('[aria-live="assertive"]').textContent).toContain(
-      'cambió en otra sesión',
+    const assertiveAnnouncements = fixture.nativeElement.querySelectorAll(
+      '[role="alert"], [aria-live="assertive"]',
     );
+    expect(assertiveAnnouncements).toHaveLength(1);
+    expect(assertiveAnnouncements[0].textContent).toContain('cambió en otra sesión');
   });
 
   it('clears sensitive create values and announces a non-conflict save failure', async () => {
@@ -414,7 +416,7 @@ describe('KnowledgeComponent', () => {
       externalId: '',
       active: true,
     });
-    expect(fixture.nativeElement.querySelector('[aria-live="assertive"]').textContent).not.toBe('');
+    expect(fixture.nativeElement.querySelector('[role="alert"]').textContent).not.toBe('');
   });
 
   it('closes an abandoned create editor instead of exposing an invalid edit state', async () => {
