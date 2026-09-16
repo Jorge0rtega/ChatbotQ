@@ -45,7 +45,7 @@ class DatabaseMigrationTest {
 
         MigrateResult result = flyway.migrate();
 
-        assertEquals(14, result.migrationsExecuted);
+        assertEquals(15, result.migrationsExecuted);
         flyway.validate();
 
         try (Connection connection = POSTGRES.createConnection("");
@@ -110,7 +110,7 @@ class DatabaseMigrationTest {
         Flyway flyway = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).createSchemas(true).locations("classpath:db/migration").load();
-        assertEquals(14, flyway.migrate().migrationsExecuted);
+        assertEquals(15, flyway.migrate().migrationsExecuted);
 
         String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -166,7 +166,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(5, upgraded.migrate().migrationsExecuted);
+        assertEquals(6, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
 
         try (Connection connection = DriverManager.getConnection(schemaUrl,
@@ -204,7 +204,7 @@ class DatabaseMigrationTest {
         }
         Flyway upgraded = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(4, upgraded.migrate().migrationsExecuted);
+        assertEquals(5, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
              PreparedStatement query = connection.prepareStatement(
@@ -217,6 +217,61 @@ class DatabaseMigrationTest {
             SQLException nonPositive = assertThrows(SQLException.class, () -> connection.createStatement().executeUpdate(
                 "update knowledge_entry set embedding_input_token_upper_bound=0 where id='" + entryId + "'"));
             assertEquals("23514", nonPositive.getSQLState());
+        }
+    }
+
+    @Test
+    void upgradesLegacyImportedRowsWithoutRewritingThemAndEnforcesImportedCoherenceForward() throws Exception {
+        String schema = "legacy_imported_row_upgrade";
+        installExtensionsInPublicSchema();
+        Flyway before = Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).createSchemas(true).locations("classpath:db/migration").target("014").load();
+        assertEquals(14, before.migrate().migrationsExecuted);
+
+        UUID projectId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        String schemaUrl = POSTGRES.getJdbcUrl() + "&currentSchema=" + schema;
+        try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             PreparedStatement project = connection.prepareStatement("insert into project(id,name) values (?,?)");
+             PreparedStatement job = connection.prepareStatement(
+                 "insert into knowledge_import_job(id,project_id,file_name,strategy,status,total_rows,valid_rows,invalid_rows,imported_rows,error_summary,created_at) "
+                     + "values (?,?,?,?,?,?,?,?,?,?::jsonb,clock_timestamp())");
+             PreparedStatement row = connection.prepareStatement(
+                 "insert into knowledge_import_row(import_job_id,row_number,question,answer,active,status,errors,knowledge_entry_id) "
+                     + "values (?,?,?,?,?,?,?::jsonb,?)")) {
+            project.setObject(1, projectId); project.setString(2, "Legacy import rows"); project.executeUpdate();
+            job.setObject(1, jobId); job.setObject(2, projectId); job.setString(3, "legacy.csv"); job.setString(4, "UPSERT");
+            job.setString(5, "COMPLETED"); job.setInt(6, 2); job.setInt(7, 1); job.setInt(8, 1); job.setInt(9, 1); job.setString(10, "[]"); job.executeUpdate();
+            row.setObject(1, jobId); row.setInt(2, 1); row.setString(3, "Broken"); row.setString(4, "Preview"); row.setBoolean(5, true);
+            row.setString(6, "INVALID"); row.setString(7, "[\"bad row\"]"); row.setObject(8, null); row.executeUpdate();
+            row.setObject(1, jobId); row.setInt(2, 2); row.setString(3, "Historic"); row.setString(4, "Imported"); row.setBoolean(5, true);
+            row.setString(6, "IMPORTED"); row.setString(7, "[]"); row.setObject(8, null); row.executeUpdate();
+        }
+
+        Flyway upgraded = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema).locations("classpath:db/migration").load();
+        assertEquals(1, upgraded.migrate().migrationsExecuted);
+        upgraded.validate();
+
+        try (Connection connection = DriverManager.getConnection(schemaUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement statement = connection.createStatement()) {
+            statement.execute("set search_path to " + schema + ", public");
+            try (ResultSet legacy = statement.executeQuery("select status,knowledge_entry_id from knowledge_import_row where import_job_id='"
+                + jobId + "' order by row_number")) {
+                assertTrue(legacy.next()); assertEquals("INVALID", legacy.getString(1)); assertNull(legacy.getObject(2));
+                assertTrue(legacy.next()); assertEquals("IMPORTED", legacy.getString(1)); assertNull(legacy.getObject(2));
+            }
+            SQLException invalidImported = assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "insert into knowledge_import_row(import_job_id,row_number,status,errors,active) values ('" + jobId
+                    + "',3,'IMPORTED','[]'::jsonb,true)"));
+            assertEquals("23514", invalidImported.getSQLState());
+
+            UUID entryId = UUID.randomUUID();
+            statement.executeUpdate("insert into knowledge_entry(id,project_id,question,answer,embedding_input_token_upper_bound) values ('"
+                + entryId + "','" + projectId + "','Valid','Entry',1)");
+            assertEquals(1, statement.executeUpdate("insert into knowledge_import_row(import_job_id,row_number,status,errors,active,knowledge_entry_id) values ('"
+                + jobId + "',4,'IMPORTED','[]'::jsonb,true,'" + entryId + "')"));
         }
     }
 
@@ -278,7 +333,7 @@ class DatabaseMigrationTest {
         Flyway upgraded = Flyway.configure()
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(schema).locations("classpath:db/migration").load();
-        assertEquals(8, upgraded.migrate().migrationsExecuted);
+        assertEquals(9, upgraded.migrate().migrationsExecuted);
         upgraded.validate();
         try (Connection connection = DriverManager.getConnection(schemaUrl,
                 POSTGRES.getUsername(), POSTGRES.getPassword());

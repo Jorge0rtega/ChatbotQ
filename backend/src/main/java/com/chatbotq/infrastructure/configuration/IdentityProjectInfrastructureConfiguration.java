@@ -30,6 +30,7 @@ import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeCsvPreviewPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
 import com.chatbotq.knowledge.application.port.KnowledgeImportAdministrationPort;
+import com.chatbotq.knowledge.application.port.KnowledgeImportExecutionPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.application.usecase.CsvKnowledgePreviewUseCase;
@@ -38,6 +39,7 @@ import com.chatbotq.knowledge.infrastructure.csv.ApacheCommonsCsvKnowledgeParser
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeImportAdministrationAdapter;
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeImportExecutionAdapter;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
@@ -90,6 +92,11 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     KnowledgeImportAdministrationPort knowledgeImportAdministrationPort(JdbcTemplate jdbc) {
         return new JdbcKnowledgeImportAdministrationAdapter(jdbc);
+    }
+
+    @Bean
+    KnowledgeImportExecutionPort knowledgeImportExecutionPort(JdbcTemplate jdbc) {
+        return new JdbcKnowledgeImportExecutionAdapter(jdbc);
     }
 
     @Bean
