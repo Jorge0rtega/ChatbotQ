@@ -1,7 +1,9 @@
 package com.chatbotq.knowledge.infrastructure.persistence;
 
 import com.chatbotq.knowledge.application.model.ClaimedKnowledgeImportExecution;
+import com.chatbotq.knowledge.application.model.ClaimedKnowledgeImportRow;
 import com.chatbotq.knowledge.application.port.KnowledgeImportExecutionPort;
+import com.chatbotq.knowledge.application.port.KnowledgeImportRowClaimPort;
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
 import com.chatbotq.knowledge.application.usecase.ImportExecutionNotReadyException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeImportJobNotFoundException;
@@ -10,14 +12,66 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.IntConsumer;
 
-public class JdbcKnowledgeImportExecutionAdapter implements KnowledgeImportExecutionPort {
+public class JdbcKnowledgeImportExecutionAdapter implements KnowledgeImportExecutionPort, KnowledgeImportRowClaimPort {
     private final JdbcTemplate jdbc;
+    private final Runnable afterCurrentJobValidated;
+    private final Runnable beforeExecutionJobLockAttempt;
+    private final IntConsumer executionJobLockAttemptObserver;
 
     public JdbcKnowledgeImportExecutionAdapter(JdbcTemplate jdbc) {
+        this(jdbc, () -> { }, () -> { }, null);
+    }
+
+    JdbcKnowledgeImportExecutionAdapter(JdbcTemplate jdbc, Runnable afterCurrentJobValidated) {
+        this(jdbc, afterCurrentJobValidated, () -> { }, null);
+    }
+
+    JdbcKnowledgeImportExecutionAdapter(JdbcTemplate jdbc, Runnable afterCurrentJobValidated, Runnable beforeExecutionJobLockAttempt) {
+        this(jdbc, afterCurrentJobValidated, beforeExecutionJobLockAttempt, null);
+    }
+
+    JdbcKnowledgeImportExecutionAdapter(JdbcTemplate jdbc, Runnable afterCurrentJobValidated, IntConsumer executionJobLockAttemptObserver) {
+        this(jdbc, afterCurrentJobValidated, () -> { }, executionJobLockAttemptObserver);
+    }
+
+    private JdbcKnowledgeImportExecutionAdapter(JdbcTemplate jdbc, Runnable afterCurrentJobValidated,
+                                                 Runnable beforeExecutionJobLockAttempt, IntConsumer executionJobLockAttemptObserver) {
         if (jdbc == null) throw new IllegalArgumentException("jdbc must not be null");
+        if (afterCurrentJobValidated == null) throw new IllegalArgumentException("afterCurrentJobValidated must not be null");
+        if (beforeExecutionJobLockAttempt == null) throw new IllegalArgumentException("beforeExecutionJobLockAttempt must not be null");
         this.jdbc = jdbc;
+        this.afterCurrentJobValidated = afterCurrentJobValidated;
+        this.beforeExecutionJobLockAttempt = beforeExecutionJobLockAttempt;
+        this.executionJobLockAttemptObserver = executionJobLockAttemptObserver;
+    }
+
+    @Override
+    @Transactional
+    public Optional<ClaimedKnowledgeImportRow> claimNextValidRow(ClaimedKnowledgeImportExecution jobClaim) {
+        if (jobClaim == null) throw new IllegalArgumentException("jobClaim must not be null");
+        List<UUID> currentJobs = jdbc.query("select id from knowledge_import_job where id=? and project_id=? "
+                + "and status='PROCESSING' and execution_claim_token=? and execution_lease_expires_at>clock_timestamp() for key share",
+            (rs, rowNum) -> rs.getObject("id", UUID.class), jobClaim.getJobId(), jobClaim.getProjectId(), jobClaim.getClaimToken());
+        if (currentJobs.isEmpty()) return Optional.empty();
+        afterCurrentJobValidated.run();
+        List<ClaimedKnowledgeImportRow> claims = jdbc.query(
+            "with current_job as materialized (select id from knowledge_import_job where id=? and project_id=? "
+                + "and status='PROCESSING' and execution_claim_token=? and execution_lease_expires_at>clock_timestamp() for no key update), "
+                + "candidate as materialized (select r.import_job_id,r.row_number from knowledge_import_row r "
+                + "where r.import_job_id=? and r.status='VALID' order by r.row_number for update skip locked limit 1), "
+                + "claimed as (update knowledge_import_row r set status='PROCESSING',attempt_count=r.attempt_count+1 "
+                + "from candidate c join current_job j on j.id=c.import_job_id where r.import_job_id=c.import_job_id "
+                + "and r.row_number=c.row_number and r.status='VALID' "
+                + "returning r.import_job_id,r.row_number,r.question,r.answer,r.external_id,r.active) "
+                + "select import_job_id,row_number,question,answer,external_id,active from claimed",
+            (rs, rowNum) -> new ClaimedKnowledgeImportRow(rs.getObject("import_job_id", UUID.class), rs.getInt("row_number"),
+                rs.getString("question"), rs.getString("answer"), rs.getString("external_id"), rs.getBoolean("active")),
+            jobClaim.getJobId(), jobClaim.getProjectId(), jobClaim.getClaimToken(), jobClaim.getJobId());
+        return claims.isEmpty() ? Optional.empty() : Optional.of(claims.get(0));
     }
 
     @Override
@@ -26,6 +80,9 @@ public class JdbcKnowledgeImportExecutionAdapter implements KnowledgeImportExecu
         Actor actor = lockActor(actorId);
         String projectStatus = lockProject(projectId, actor.generalAdmin);
         authorize(actor, projectId, projectStatus);
+        beforeExecutionJobLockAttempt.run();
+        if (executionJobLockAttemptObserver != null) executionJobLockAttemptObserver.accept(
+            jdbc.queryForObject("select pg_backend_pid()", Integer.class));
         List<String> statuses = jdbc.query("select status from knowledge_import_job where id=? and project_id=? for update",
             (rs, rowNum) -> rs.getString(1), jobId, projectId);
         if (statuses.isEmpty()) throw new KnowledgeImportJobNotFoundException();
