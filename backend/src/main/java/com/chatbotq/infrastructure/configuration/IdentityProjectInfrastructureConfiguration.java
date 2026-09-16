@@ -100,8 +100,10 @@ public class IdentityProjectInfrastructureConfiguration {
     @Bean
     ApacheCommonsCsvKnowledgeParser knowledgeCsvParser(
         @Value("${chatbotq.knowledge.csv.max-raw-bytes:1048576}") int maxRawBytes,
-        @Value("${chatbotq.knowledge.csv.max-data-rows:1000}") int maxDataRows) {
-        return new ApacheCommonsCsvKnowledgeParser(maxRawBytes, maxDataRows);
+        @Value("${chatbotq.knowledge.csv.max-data-rows:1000}") int maxDataRows,
+        @Value("${chatbotq.knowledge.csv.max-columns:4}") int maxColumns,
+        @Value("${chatbotq.knowledge.csv.max-cell-encoded-bytes:32768}") int maxCellEncodedBytes) {
+        return new ApacheCommonsCsvKnowledgeParser(maxRawBytes, maxDataRows, maxColumns, maxCellEncodedBytes);
     }
 
     @Bean

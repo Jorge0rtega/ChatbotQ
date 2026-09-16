@@ -77,13 +77,80 @@ class CsvKnowledgePreviewUseCaseTest {
         assertEquals(2, preview.preview(accepted.getBytes(StandardCharsets.UTF_8),
             KnowledgeCsvImportStrategy.CREATE_ONLY).getRows().size());
         assertFileError(preview.preview(rejected.getBytes(StandardCharsets.UTF_8),
-            KnowledgeCsvImportStrategy.CREATE_ONLY), "too_many_rows");
+            KnowledgeCsvImportStrategy.CREATE_ONLY), "csv_limits_exceeded");
+    }
+
+    @Test
+    void rejectsColumnHeavyHeadersBeforeMaterializingAnyPreviewData() {
+        KnowledgeCsvPreviewPort preview = previewWithLexicalLimits(2, 4, 64);
+        String marker = "HEADER_SECRET_SHOULD_NOT_LEAK";
+
+        KnowledgeCsvPreview result = preview.preview(("question,answer,external_id,active," + marker + "\nQ,A,id,true,x\n")
+            .getBytes(StandardCharsets.UTF_8), KnowledgeCsvImportStrategy.CREATE_ONLY);
+
+        assertLexicalLimitError(result, marker);
+    }
+
+    @Test
+    void rejectsColumnHeavyRowsBeforeMaterializingAnyPreviewData() {
+        KnowledgeCsvPreviewPort preview = previewWithLexicalLimits(2, 4, 64);
+        String marker = "ROW_SECRET_SHOULD_NOT_LEAK";
+
+        KnowledgeCsvPreview result = preview.preview(("question,answer\nQ,A," + marker + ",extra,overflow\n")
+            .getBytes(StandardCharsets.UTF_8), KnowledgeCsvImportStrategy.CREATE_ONLY);
+
+        assertLexicalLimitError(result, marker);
+    }
+
+    @Test
+    void rejectsOversizedCellsBeforeMaterializingAnyPreviewData() {
+        KnowledgeCsvPreviewPort preview = previewWithLexicalLimits(2, 4, 8);
+        String marker = "CELL_SECRET_SHOULD_NOT_LEAK";
+
+        KnowledgeCsvPreview result = preview.preview(("question,answer\nQ," + marker + "\n")
+            .getBytes(StandardCharsets.UTF_8), KnowledgeCsvImportStrategy.CREATE_ONLY);
+
+        assertLexicalLimitError(result, marker);
+    }
+
+    @Test
+    void acceptsExactLexicalColumnCellAndRowBoundariesIncludingLf() {
+        String answer = repeat("x", 32);
+        String file = "question,answer,external_id,active\nQ," + answer + ",id,true\nQ2,A2,id2,false\n";
+        KnowledgeCsvPreviewPort preview = previewWithLexicalLimits(2, 4, 32);
+
+        KnowledgeCsvPreview result = preview.preview(file.getBytes(StandardCharsets.UTF_8), KnowledgeCsvImportStrategy.CREATE_ONLY);
+
+        assertEquals(2, result.getValidRowCount());
+        assertEquals(0, result.getInvalidRowCount());
+    }
+
+    @Test
+    void acceptsDefaultCellBudgetForEightThousandFourByteUnicodeCodePoints() {
+        String answer = repeat("🙂", 8000);
+        ApacheCommonsCsvKnowledgeParser parser = new ApacheCommonsCsvKnowledgeParser(100_000, 1);
+
+        assertTrue(parser.parse(("question,answer\nQ," + answer + "\n").getBytes(StandardCharsets.UTF_8))
+            .getFileErrors().isEmpty());
+    }
+
+    @Test
+    void rejectsOverRowLimitBeforeCommonsCsvCanParseAnotherRecord() {
+        KnowledgeCsvPreviewPort preview = previewWithLexicalLimits(2, 4, 64);
+        String marker = "ROW_LIMIT_SECRET_SHOULD_NOT_LEAK";
+
+        KnowledgeCsvPreview result = preview.preview(("question,answer\nQ1,A1\nQ2,A2\n" + marker + ",A3\n")
+            .getBytes(StandardCharsets.UTF_8), KnowledgeCsvImportStrategy.CREATE_ONLY);
+
+        assertLexicalLimitError(result, marker);
     }
 
     @Test
     void rejectsNonPositiveConfiguredLimitsFailClosed() {
         assertThrows(IllegalArgumentException.class, () -> new ApacheCommonsCsvKnowledgeParser(0, 1));
         assertThrows(IllegalArgumentException.class, () -> new ApacheCommonsCsvKnowledgeParser(1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ApacheCommonsCsvKnowledgeParser(1, 1, 0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new ApacheCommonsCsvKnowledgeParser(1, 1, 1, 0));
     }
 
     @Test
@@ -168,6 +235,13 @@ class CsvKnowledgePreviewUseCaseTest {
         }
     }
 
+    private static KnowledgeCsvPreviewPort previewWithLexicalLimits(int maxRows, int maxColumns, int maxCellBytes) {
+        return new CsvKnowledgePreviewUseCase(new ApacheCommonsCsvKnowledgeParser(100_000, maxRows, maxColumns, maxCellBytes), 4000);
+    }
+    private static void assertLexicalLimitError(KnowledgeCsvPreview result, String marker) {
+        assertFileError(result, "csv_limits_exceeded");
+        assertFalse(result.getFileErrors().get(0).getMessage().contains(marker));
+    }
     private static KnowledgeCsvPreviewPort preview(int maxTokens) {
         return new CsvKnowledgePreviewUseCase(new ApacheCommonsCsvKnowledgeParser(100_000, 100), maxTokens);
     }

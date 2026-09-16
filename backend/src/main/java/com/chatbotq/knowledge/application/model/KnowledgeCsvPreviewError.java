@@ -14,7 +14,7 @@ public final class KnowledgeCsvPreviewError {
 
     private static String messageFor(String code) {
         if ("file_too_large".equals(code)) return "The CSV file exceeds the maximum allowed size.";
-        if ("too_many_rows".equals(code)) return "The CSV file exceeds the maximum allowed row count.";
+        if ("csv_limits_exceeded".equals(code)) return "The CSV file exceeds configured safety limits.";
         if ("invalid_utf8".equals(code)) return "The CSV must be valid UTF-8.";
         if ("csv_syntax".equals(code)) return "The CSV syntax is invalid.";
         if ("invalid_headers".equals(code)) return "The CSV headers are invalid.";
