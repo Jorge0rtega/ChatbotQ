@@ -29,12 +29,15 @@ import com.chatbotq.infrastructure.identity.UuidProjectIdentityGenerator;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeCsvPreviewPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEmbeddingProcessingPort;
+import com.chatbotq.knowledge.application.port.KnowledgeImportAdministrationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.application.usecase.CsvKnowledgePreviewUseCase;
+import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeImportsUseCase;
 import com.chatbotq.knowledge.infrastructure.csv.ApacheCommonsCsvKnowledgeParser;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
+import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeImportAdministrationAdapter;
 import com.chatbotq.projects.application.port.AllowedOriginIdentityGenerator;
 import com.chatbotq.projects.application.port.AllowedOriginRepository;
 import com.chatbotq.projects.application.port.ProjectIdentityGenerator;
@@ -85,6 +88,11 @@ public class IdentityProjectInfrastructureConfiguration {
     }
 
     @Bean
+    KnowledgeImportAdministrationPort knowledgeImportAdministrationPort(JdbcTemplate jdbc) {
+        return new JdbcKnowledgeImportAdministrationAdapter(jdbc);
+    }
+
+    @Bean
     KnowledgeEntryIdentityGenerator knowledgeEntryIdentityGenerator() {
         return new UuidKnowledgeEntryIdentityGenerator();
     }
@@ -110,6 +118,13 @@ public class IdentityProjectInfrastructureConfiguration {
     KnowledgeCsvPreviewPort knowledgeCsvPreviewPort(ApacheCommonsCsvKnowledgeParser parser,
         @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
         return new CsvKnowledgePreviewUseCase(parser, maxInputTokensPerEntry);
+    }
+
+    @Bean
+    AdministerKnowledgeImportsUseCase administerKnowledgeImportsUseCase(KnowledgeCsvPreviewPort preview,
+                                                                         KnowledgeImportAdministrationPort jobs,
+                                                                         Clock clock) {
+        return new AdministerKnowledgeImportsUseCase(preview, jobs, clock);
     }
 
     @Bean

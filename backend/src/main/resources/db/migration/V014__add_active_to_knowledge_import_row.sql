@@ -1,0 +1,1 @@
+ALTER TABLE knowledge_import_row ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE;
