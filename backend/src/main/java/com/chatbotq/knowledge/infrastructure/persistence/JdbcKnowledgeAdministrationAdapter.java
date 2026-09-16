@@ -1,11 +1,16 @@
 package com.chatbotq.knowledge.infrastructure.persistence;
 
+import com.chatbotq.knowledge.application.model.ClaimedKnowledgeImportExecution;
+import com.chatbotq.knowledge.application.model.ClaimedKnowledgeImportRow;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
+import com.chatbotq.knowledge.application.model.NewKnowledgeEntry;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
+import com.chatbotq.knowledge.application.port.KnowledgeImportRowMutationPort;
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeEntryNotFoundException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeVersionConflictException;
+import com.chatbotq.knowledge.application.usecase.StaleKnowledgeImportMutationException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,12 +23,36 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.UUID;
 
-public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrationPort {
+public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrationPort, KnowledgeImportRowMutationPort {
     private final JdbcTemplate jdbc;
+    private final Runnable afterClaimedRowLocked;
+    private final Runnable afterEntryInserted;
+
+    // Both authorization protocols feed this one canonical persistence primitive. Imports attribute the entry
+    // to the actor who created the durable import job; a reclaimed/fenced job cannot reach this CTE.
+    private static String canonicalEntryInsertion(String source, String conflictClause) {
+        return "inserted as (insert into knowledge_entry "
+            + "(id,project_id,question,answer,external_id,active,embedding_input_token_upper_bound,created_by,updated_by,created_at,updated_at) "
+            + source + conflictClause
+            + " returning id,project_id,question,answer,external_id,active,embedding_status,embedding_revision,embedding_attempt_count,"
+            + "embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,version,created_at,updated_at)";
+    }
 
     public JdbcKnowledgeAdministrationAdapter(JdbcTemplate jdbc) {
+        this(jdbc, () -> { }, () -> { });
+    }
+
+    JdbcKnowledgeAdministrationAdapter(JdbcTemplate jdbc, Runnable afterClaimedRowLocked) {
+        this(jdbc, afterClaimedRowLocked, () -> { });
+    }
+
+    JdbcKnowledgeAdministrationAdapter(JdbcTemplate jdbc, Runnable afterClaimedRowLocked, Runnable afterEntryInserted) {
         if (jdbc == null) throw new IllegalArgumentException("jdbc must not be null");
+        if (afterClaimedRowLocked == null) throw new IllegalArgumentException("afterClaimedRowLocked must not be null");
+        if (afterEntryInserted == null) throw new IllegalArgumentException("afterEntryInserted must not be null");
         this.jdbc = jdbc;
+        this.afterClaimedRowLocked = afterClaimedRowLocked;
+        this.afterEntryInserted = afterEntryInserted;
     }
 
     @Override
@@ -38,11 +67,9 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
                 + "general_admin, exists (select 1 from target) project_exists, exists (select 1 from actor a "
                 + "join target p on p.status='ACTIVE' where a.is_general_admin or exists (select 1 "
                 + "from user_project_role upr where upr.user_id=a.id and upr.project_id=p.id "
-                + "and upr.role='PROJECT_ADMIN')) authorized), inserted as (insert into knowledge_entry "
-                + "(id,project_id,question,answer,external_id,active,embedding_input_token_upper_bound,created_by,updated_by,created_at,updated_at) "
-                + "select ?,t.id,?,?,?,?,?,?,?,?,? from target t cross join decision d where d.authorized "
-                + "returning id,project_id,question,answer,external_id,active,embedding_status,embedding_revision,embedding_attempt_count,embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,version,"
-                + "created_at,updated_at) select d.general_admin,d.project_exists,d.authorized,i.id,i.project_id,"
+                + "and upr.role='PROJECT_ADMIN')) authorized), "
+                + canonicalEntryInsertion("select ?,t.id,?,?,?,?,?,?,?,?,? from target t cross join decision d where d.authorized", "")
+                + " select d.general_admin,d.project_exists,d.authorized,i.id,i.project_id,"
                 + "i.question,i.answer,i.external_id,i.active,i.embedding_status,i.embedding_revision,i.embedding_attempt_count,i.embedding_last_attempt_at,i.embedding_last_error_code,i.embedding_last_error_message,i.version,i.created_at,"
                 + "i.updated_at from decision d left join inserted i on true",
             (rs, rowNum) -> mapOutcome(rs), actorId, projectId, entryId, question, answer, externalId, active,
@@ -53,6 +80,82 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
             throw new ForbiddenKnowledgeAdministrationException();
         }
         return outcome.entry;
+    }
+
+    @Override
+    @Transactional
+    public KnowledgeImportRowMutationPort.Result createOnly(ClaimedKnowledgeImportExecution execution,
+                                                              ClaimedKnowledgeImportRow row, NewKnowledgeEntry entry) {
+        if (execution == null || row == null || entry == null) throw new IllegalArgumentException("import mutation fields must not be null");
+        if (!lockClaimedRow(execution, row)) return KnowledgeImportRowMutationPort.Result.STALE;
+        afterClaimedRowLocked.run();
+
+        // ON CONFLICT observes the unique-index result, not the statement snapshot. A later READ COMMITTED
+        // statement locks the actual conflicting entry before it terminalizes the row, so a concurrent delete
+        // either happens first and is retried as an insert, or waits until the FAILED outcome is durable.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            UUID inserted = insertIfFenceIsCurrent(execution, entry);
+            if (inserted != null) {
+                afterEntryInserted.run();
+                if (!terminalize(execution, row, "IMPORTED", inserted, null)) {
+                    throw new StaleKnowledgeImportMutationException();
+                }
+                return KnowledgeImportRowMutationPort.Result.IMPORTED;
+            }
+            if (!isCurrentClaim(execution)) return KnowledgeImportRowMutationPort.Result.STALE;
+            if (lockActualConflict(execution.getProjectId(), entry.getExternalId())) {
+                return terminalize(execution, row, "FAILED", null, "knowledge_external_id_conflict")
+                    ? KnowledgeImportRowMutationPort.Result.EXTERNAL_ID_CONFLICT : KnowledgeImportRowMutationPort.Result.STALE;
+            }
+        }
+        throw new IllegalStateException("external-id conflict changed too often to terminalize import row");
+    }
+
+    private boolean lockClaimedRow(ClaimedKnowledgeImportExecution execution, ClaimedKnowledgeImportRow row) {
+        List<Integer> locked = jdbc.query("select r.row_number from knowledge_import_row r join knowledge_import_job j on j.id=r.import_job_id "
+                + "where j.id=? and j.project_id=? and j.strategy='CREATE_ONLY' and j.status='PROCESSING' "
+                + "and j.execution_claim_token=? and j.execution_lease_expires_at>clock_timestamp() "
+                + "and r.import_job_id=? and r.row_number=? and r.status='PROCESSING' for update of r",
+            (rs, rowNum) -> rs.getInt(1), execution.getJobId(), execution.getProjectId(), execution.getClaimToken(),
+            row.getJobId(), row.getRowNumber());
+        return !locked.isEmpty();
+    }
+
+    private UUID insertIfFenceIsCurrent(ClaimedKnowledgeImportExecution execution, NewKnowledgeEntry entry) {
+        List<UUID> inserted = jdbc.query("with current_job as materialized (select id,project_id,created_by from knowledge_import_job "
+                + "where id=? and project_id=? and strategy='CREATE_ONLY' and status='PROCESSING' and execution_claim_token=? "
+                + "and execution_lease_expires_at>clock_timestamp() for no key update), "
+                + canonicalEntryInsertion("select ?,j.project_id,?,?,?,?,?,j.created_by,j.created_by,clock_timestamp(),clock_timestamp() "
+                    + "from current_job j where j.created_by is not null", " on conflict (project_id,external_id) do nothing")
+                + " select id from inserted",
+            (rs, rowNum) -> rs.getObject("id", UUID.class), execution.getJobId(), execution.getProjectId(), execution.getClaimToken(),
+            entry.getId(), entry.getQuestion(), entry.getAnswer(), entry.getExternalId(), entry.isActive(),
+            entry.getEmbeddingInputTokenUpperBound());
+        return inserted.isEmpty() ? null : inserted.get(0);
+    }
+
+    private boolean isCurrentClaim(ClaimedKnowledgeImportExecution execution) {
+        Integer current = jdbc.queryForObject("select count(*) from knowledge_import_job where id=? and project_id=? "
+                + "and strategy='CREATE_ONLY' and status='PROCESSING' and execution_claim_token=? and created_by is not null "
+                + "and execution_lease_expires_at>clock_timestamp()", Integer.class,
+            execution.getJobId(), execution.getProjectId(), execution.getClaimToken());
+        return current != null && current == 1;
+    }
+
+    private boolean lockActualConflict(UUID projectId, String externalId) {
+        List<UUID> conflicts = jdbc.query("select id from knowledge_entry where project_id=? and external_id=? for key share",
+            (rs, rowNum) -> rs.getObject("id", UUID.class), projectId, externalId);
+        return !conflicts.isEmpty();
+    }
+
+    private boolean terminalize(ClaimedKnowledgeImportExecution execution, ClaimedKnowledgeImportRow row, String status,
+                                UUID entryId, String errorCode) {
+        return jdbc.update("update knowledge_import_row r set status=?,knowledge_entry_id=?,execution_error_code=? "
+                + "from knowledge_import_job j where r.import_job_id=j.id and r.import_job_id=? and r.row_number=? "
+                + "and r.status='PROCESSING' and j.id=? and j.project_id=? and j.strategy='CREATE_ONLY' "
+                + "and j.status='PROCESSING' and j.execution_claim_token=? and j.execution_lease_expires_at>clock_timestamp()",
+            status, entryId, errorCode, row.getJobId(), row.getRowNumber(), execution.getJobId(), execution.getProjectId(),
+            execution.getClaimToken()) == 1;
     }
 
     @Override

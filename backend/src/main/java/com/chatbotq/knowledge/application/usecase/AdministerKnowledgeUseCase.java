@@ -4,6 +4,7 @@ import com.chatbotq.knowledge.application.model.EmbeddingInputTokenUpperBound;
 import com.chatbotq.knowledge.application.model.KnowledgeTextNormalizer;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntry;
 import com.chatbotq.knowledge.application.model.ManagedKnowledgeEntryPage;
+import com.chatbotq.knowledge.application.model.NewKnowledgeEntry;
 import com.chatbotq.knowledge.application.port.KnowledgeAdministrationPort;
 import com.chatbotq.knowledge.application.port.KnowledgeEntryIdentityGenerator;
 
@@ -15,9 +16,8 @@ public final class AdministerKnowledgeUseCase {
     public static final int MAX_PAGE_SIZE = 100;
     public static final long MAX_OFFSET = 1_000_000L;
     private final KnowledgeAdministrationPort entries;
-    private final KnowledgeEntryIdentityGenerator identities;
     private final Clock clock;
-    private final int maxEmbeddingInputTokensPerEntry;
+    private final KnowledgeEntryCreationService creation;
 
     public AdministerKnowledgeUseCase(KnowledgeAdministrationPort entries, KnowledgeEntryIdentityGenerator identities, Clock clock) {
         this(entries, identities, clock, 4000);
@@ -25,14 +25,13 @@ public final class AdministerKnowledgeUseCase {
     public AdministerKnowledgeUseCase(KnowledgeAdministrationPort entries, KnowledgeEntryIdentityGenerator identities,
                                       Clock clock, int maxEmbeddingInputTokensPerEntry) {
         if (maxEmbeddingInputTokensPerEntry < 1) throw new IllegalArgumentException("maxEmbeddingInputTokensPerEntry must be positive");
-        this.entries = require(entries, "entries"); this.identities = require(identities, "identities"); this.clock = require(clock, "clock");
-        this.maxEmbeddingInputTokensPerEntry = maxEmbeddingInputTokensPerEntry;
+        this.entries = require(entries, "entries"); this.clock = require(clock, "clock");
+        this.creation = new KnowledgeEntryCreationService(require(identities, "identities"), maxEmbeddingInputTokensPerEntry);
     }
     public ManagedKnowledgeEntry create(UUID actorId, UUID projectId, String question, String answer, String externalId, boolean active) {
-        String normalizedQuestion = KnowledgeTextNormalizer.normalize(question, "question", 2000, false);
-        int tokenUpperBound = validateEmbeddingInputTokenUpperBound(normalizedQuestion);
-        return entries.create(require(actorId, "actorId"), require(projectId, "projectId"), identities.newKnowledgeEntryId(), normalizedQuestion,
-            KnowledgeTextNormalizer.normalize(answer, "answer", 8000, false), KnowledgeTextNormalizer.normalize(externalId, "externalId", 255, true), active, tokenUpperBound, clock.instant());
+        NewKnowledgeEntry entry = creation.prepare(question, answer, externalId, active);
+        return entries.create(require(actorId, "actorId"), require(projectId, "projectId"), entry.getId(), entry.getQuestion(),
+            entry.getAnswer(), entry.getExternalId(), entry.isActive(), entry.getEmbeddingInputTokenUpperBound(), clock.instant());
     }
     public ManagedKnowledgeEntry get(UUID actorId, UUID projectId, UUID entryId) {
         return entries.get(require(actorId, "actorId"), require(projectId, "projectId"), require(entryId, "entryId"));
@@ -42,7 +41,7 @@ public final class AdministerKnowledgeUseCase {
         UUID requiredActorId = require(actorId, "actorId"); UUID requiredProjectId = require(projectId, "projectId"); UUID requiredEntryId = require(entryId, "entryId");
         String normalizedQuestion = KnowledgeTextNormalizer.normalize(question, "question", 2000, false);
         ManagedKnowledgeEntry current = entries.get(requiredActorId, requiredProjectId, requiredEntryId);
-        int tokenUpperBound = normalizedQuestion.equals(current.getQuestion()) ? 0 : validateEmbeddingInputTokenUpperBound(normalizedQuestion);
+        int tokenUpperBound = normalizedQuestion.equals(current.getQuestion()) ? 0 : creation.tokenUpperBound(normalizedQuestion);
         return entries.update(requiredActorId, requiredProjectId, requiredEntryId, normalizedQuestion,
             KnowledgeTextNormalizer.normalize(answer, "answer", 8000, false), KnowledgeTextNormalizer.normalize(externalId, "externalId", 255, true), active, version, tokenUpperBound, clock.instant());
     }
@@ -58,11 +57,6 @@ public final class AdministerKnowledgeUseCase {
         catch (ArithmeticException overflow) { throw new IllegalArgumentException("requested page offset is too large", overflow); }
         if (offset > MAX_OFFSET) throw new IllegalArgumentException("requested page offset is too large");
         return entries.list(actorId, projectId, escapeLike(KnowledgeTextNormalizer.normalize(query, "q", 200, true)), page, size, offset);
-    }
-    private int validateEmbeddingInputTokenUpperBound(String question) {
-        int upperBound = EmbeddingInputTokenUpperBound.forQuestion(question);
-        if (upperBound > maxEmbeddingInputTokensPerEntry) throw new IllegalArgumentException("question exceeds embedding input token limit of " + maxEmbeddingInputTokensPerEntry);
-        return upperBound;
     }
     private static String escapeLike(String value) { return value == null ? null : value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"); }
     private static <T> T require(T value, String name) { if (value == null) throw new IllegalArgumentException(name + " must not be null"); return value; }
