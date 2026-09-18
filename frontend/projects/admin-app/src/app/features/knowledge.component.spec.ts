@@ -2,7 +2,13 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import { AdminApiService } from '../core/admin-api.service';
-import { KnowledgeEntry, MeResponse, PageResponse, Project } from '../core/models';
+import {
+  KnowledgeEntry,
+  KnowledgeImportDetail,
+  MeResponse,
+  PageResponse,
+  Project,
+} from '../core/models';
 import { SessionService } from '../core/session.service';
 import { KnowledgeComponent } from './knowledge.component';
 
@@ -44,6 +50,25 @@ const knowledgePage = (items: KnowledgeEntry[]): PageResponse<KnowledgeEntry> =>
   totalPages: items.length ? 1 : 0,
 });
 
+const importDetail = (overrides: Partial<KnowledgeImportDetail> = {}): KnowledgeImportDetail => ({
+  id: 'job-1',
+  projectId: 'p1',
+  fileName: 'knowledge.csv',
+  strategy: 'CREATE_ONLY',
+  status: 'READY',
+  totalRows: 1,
+  validRows: 1,
+  invalidRows: 0,
+  importedRows: 0,
+  errorSummary: [],
+  createdAt: '2026-01-01T00:00:00Z',
+  rows: [{ rowNumber: 2, question: 'Pregunta importada', answer: 'Respuesta importada', externalId: 'csv-1', active: true, status: 'VALID', errors: [] }],
+  page: 0,
+  size: 20,
+  totalRowElements: 1,
+  ...overrides,
+});
+
 describe('KnowledgeComponent', () => {
   async function configure(
     overrides: Record<string, unknown> = {},
@@ -62,6 +87,10 @@ describe('KnowledgeComponent', () => {
       createKnowledge: vi.fn(() => of(entry('new', 'Pregunta nueva', 'PENDING'))),
       updateKnowledge: vi.fn(() => of(entry('k1', '¿Cuál es el horario?', 'READY'))),
       retryKnowledgeEmbedding: vi.fn(() => of(entry('k1', '¿Cuál es el horario?', 'PENDING'))),
+      createKnowledgeImport: vi.fn(() => of(importDetail())),
+      getKnowledgeImport: vi.fn(() => of(importDetail())),
+      executeKnowledgeImport: vi.fn(() => of(importDetail())),
+      retryKnowledgeImport: vi.fn(() => of(importDetail())),
       ...overrides,
     };
     const sessionMe = signal(me);
@@ -174,6 +203,217 @@ describe('KnowledgeComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Página 2 de 2');
     expect(fixture.nativeElement.textContent).toContain('Segunda página');
   });
+
+  it('uploads a selected CSV, then loads its first import detail page', async () => {
+    const uploaded = importDetail({ strategy: 'UPSERT' });
+    const { api, fixture } = await configure({
+      createKnowledgeImport: vi.fn(() => of(uploaded)),
+      getKnowledgeImport: vi.fn(() => of(uploaded)),
+    });
+    fixture.detectChanges();
+    const trigger = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Importar CSV',
+    ) as HTMLButtonElement;
+    fixture.componentInstance.openImport(trigger);
+    fixture.detectChanges();
+    const file = new File(['question,answer\nPregunta importada,Respuesta importada'], 'knowledge.csv', {
+      type: 'text/csv',
+    });
+
+    fixture.componentInstance.selectImportFile(file);
+    fixture.componentInstance.importStrategy.set('UPSERT');
+    fixture.componentInstance.uploadImport();
+    fixture.detectChanges();
+
+    expect(api.createKnowledgeImport).toHaveBeenCalledExactlyOnceWith('p1', file, 'UPSERT');
+    expect(api.getKnowledgeImport).toHaveBeenCalledExactlyOnceWith('p1', 'job-1', 0, 20);
+    expect(fixture.nativeElement.textContent).toContain('Pregunta importada');
+  });
+
+  it('shows only allowed import actions, confirms execution, and loads row page twenty at a time', async () => {
+    const ready = importDetail({ totalRowElements: 21 });
+    const pageTwo = importDetail({ page: 1, rows: [], totalRowElements: 21 });
+    const { api, fixture } = await configure({
+      getKnowledgeImport: vi.fn().mockReturnValueOnce(of(ready)).mockReturnValueOnce(of(pageTwo)),
+      executeKnowledgeImport: vi.fn(() => of(ready)),
+    });
+    fixture.detectChanges();
+    fixture.componentInstance.openImport(fixture.nativeElement.querySelector('button'));
+    fixture.componentInstance.importDetail.set(importDetail({ status: 'FAILED', invalidRows: 1 }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('Reintentar importación');
+    expect(fixture.nativeElement.textContent).not.toContain('Ejecutar importación');
+
+    fixture.componentInstance.importDetail.set(ready);
+    fixture.detectChanges();
+    ([...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.trim() === 'Ejecutar importación')!
+      .click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alertdialog"]')).not.toBeNull();
+    fixture.componentInstance.confirmImportAction();
+    fixture.detectChanges();
+
+    expect(api.executeKnowledgeImport).toHaveBeenCalledExactlyOnceWith('p1', 'job-1');
+    expect(api.getKnowledgeImport).toHaveBeenCalledWith('p1', 'job-1', 0, 20);
+    fixture.componentInstance.loadImportDetail(1);
+    expect(api.getKnowledgeImport).toHaveBeenLastCalledWith('p1', 'job-1', 1, 20);
+  });
+
+  it('clears uploaded file and rows on import failure and cancels a closed import request', async () => {
+    const late = new Subject<KnowledgeImportDetail>();
+    const { fixture } = await configure({
+      createKnowledgeImport: vi.fn(() => throwError(() => ({ status: 500 }))),
+      getKnowledgeImport: vi.fn(() => late),
+    });
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    fixture.componentInstance.openImport(trigger);
+    fixture.componentInstance.selectImportFile(new File(['private'], 'private.csv'));
+    fixture.componentInstance.uploadImport();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.importFile()).toBeNull();
+    expect(fixture.componentInstance.importDetail()).toBeNull();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).not.toBe('');
+
+    fixture.componentInstance.importDetail.set(importDetail());
+    fixture.componentInstance.loadImportDetail(0);
+    fixture.componentInstance.closeImport();
+    late.next(importDetail({ rows: [{ ...importDetail().rows[0], question: 'Fila tardía' }] }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.importDetail()).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('Fila tardía');
+  });
+
+  it('does not announce or render stale import mutations after a newer upload starts', async () => {
+    const pendingMutation = new Subject<KnowledgeImportDetail>();
+    const { fixture } = await configure({ executeKnowledgeImport: vi.fn(() => pendingMutation) });
+    fixture.detectChanges();
+    fixture.componentInstance.openImport(fixture.nativeElement.querySelector('button'));
+    fixture.componentInstance.importDetail.set(importDetail());
+    fixture.componentInstance.askImportAction('execute');
+    fixture.componentInstance.confirmImportAction();
+    fixture.componentInstance.selectImportFile(new File(['question,answer'], 'replacement.csv'));
+    pendingMutation.next(importDetail({ fileName: 'stale.csv' }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.importDetail()).toBeNull();
+    expect(fixture.componentInstance.feedback()).not.toContain('Importación enviada a ejecución');
+    expect(fixture.nativeElement.textContent).not.toContain('stale.csv');
+  });
+
+  it('permits retry only for a failed import without invalid rows and reloads after conflict', async () => {
+    const failed = importDetail({ status: 'FAILED', invalidRows: 0 });
+    const { api, fixture } = await configure({
+      retryKnowledgeImport: vi.fn(() => throwError(() => ({ status: 409 }))),
+      getKnowledgeImport: vi.fn(() => of(failed)),
+    });
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    fixture.componentInstance.openImport(trigger);
+    fixture.componentInstance.importDetail.set(failed);
+    fixture.detectChanges();
+    fixture.componentInstance.askImportAction('retry');
+    fixture.componentInstance.confirmImportAction();
+    fixture.detectChanges();
+
+    expect(api.retryKnowledgeImport).toHaveBeenCalledExactlyOnceWith('p1', 'job-1');
+    expect(api.getKnowledgeImport).toHaveBeenCalledWith('p1', 'job-1', 0, 20);
+    expect(fixture.componentInstance.pendingImportAction()).toBeNull();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')?.textContent).toContain('cambió en otra sesión');
+  });
+
+  it('moves focus into the import panel and restores it on close', async () => {
+    const { fixture } = await configure();
+    fixture.detectChanges();
+    const trigger = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Importar CSV',
+    ) as HTMLButtonElement;
+    fixture.componentInstance.openImport(trigger);
+    fixture.detectChanges();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('#knowledge-import-heading'));
+    fixture.componentInstance.closeImport();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('traps confirmation focus, makes the background inert, and returns focus to the import action on cancel', async () => {
+    const { fixture } = await configure();
+    fixture.detectChanges();
+    const importTrigger = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Importar CSV',
+    ) as HTMLButtonElement;
+    fixture.componentInstance.openImport(importTrigger);
+    fixture.componentInstance.importDetail.set(importDetail());
+    fixture.detectChanges();
+    const execute = [...fixture.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Ejecutar importación',
+    ) as HTMLButtonElement;
+
+    execute.click();
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    const dialog = fixture.nativeElement.querySelector('[role="alertdialog"]') as HTMLElement;
+    const confirm = [...dialog.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Confirmar',
+    ) as HTMLButtonElement;
+    const cancel = [...dialog.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Cancelar',
+    ) as HTMLButtonElement;
+    expect(fixture.nativeElement.querySelector('.page')?.hasAttribute('inert')).toBe(true);
+    expect(document.activeElement).toBe(confirm);
+
+    cancel.focus();
+    cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(confirm);
+    confirm.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(cancel);
+
+    cancel.click();
+    fixture.detectChanges();
+    await Promise.resolve();
+    expect(fixture.nativeElement.querySelector('.page')?.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(execute);
+  });
+
+  it.each([
+    ['execute', importDetail(), 'executeKnowledgeImport'],
+    ['retry', importDetail({ status: 'FAILED', invalidRows: 0 }), 'retryKnowledgeImport'],
+  ] as const)(
+    'cancels a pending %s import confirmation on Escape without mutating and restores focus',
+    async (action, detail, mutationMethod) => {
+      const { api, fixture } = await configure();
+      fixture.detectChanges();
+      const importTrigger = [...fixture.nativeElement.querySelectorAll('button')].find(
+        (button: HTMLButtonElement) => button.textContent?.trim() === 'Importar CSV',
+      ) as HTMLButtonElement;
+      fixture.componentInstance.openImport(importTrigger);
+      fixture.componentInstance.importDetail.set(detail);
+      fixture.detectChanges();
+      const actionLabel = action === 'execute' ? 'Ejecutar importación' : 'Reintentar importación';
+      const actionButton = [...fixture.nativeElement.querySelectorAll('button')].find(
+        (button: HTMLButtonElement) => button.textContent?.trim() === actionLabel,
+      ) as HTMLButtonElement;
+
+      actionButton.click();
+      fixture.detectChanges();
+      await Promise.resolve();
+      const dialog = fixture.nativeElement.querySelector('[role="alertdialog"]') as HTMLElement;
+      dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      fixture.detectChanges();
+      await Promise.resolve();
+
+      expect(fixture.nativeElement.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(fixture.nativeElement.querySelector('.page')?.hasAttribute('inert')).toBe(false);
+      expect(api[mutationMethod]).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(actionButton);
+    },
+  );
 
   it('loads the first available project and renders its knowledge status', async () => {
     const { api, fixture } = await configure();
@@ -466,5 +706,24 @@ describe('KnowledgeComponent', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Pregunta dos');
     expect(fixture.nativeElement.textContent).not.toContain('Pregunta tardía');
+  });
+
+  it('does not render a late import detail after the selected project changes', async () => {
+    const lateDetail = new Subject<KnowledgeImportDetail>();
+    const { fixture } = await configure({
+      listAllProjects: vi.fn(() => of([project('p1', 'Proyecto uno'), project('p2', 'Proyecto dos')])),
+      getKnowledgeImport: vi.fn(() => lateDetail),
+    });
+    fixture.detectChanges();
+    fixture.componentInstance.openImport(fixture.nativeElement.querySelector('button'));
+    fixture.componentInstance.importDetail.set(importDetail());
+    fixture.componentInstance.loadImportDetail(0);
+    fixture.componentInstance.selectProject('p2');
+    lateDetail.next(importDetail({ fileName: 'project-one-private.csv' }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.importOpen()).toBe(false);
+    expect(fixture.componentInstance.importDetail()).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('project-one-private.csv');
   });
 });

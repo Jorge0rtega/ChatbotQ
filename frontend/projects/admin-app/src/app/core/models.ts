@@ -87,3 +87,38 @@ export interface KnowledgeEntry {
   createdAt: string;
   updatedAt: string;
 }
+
+export type KnowledgeImportStrategy = 'CREATE_ONLY' | 'UPSERT';
+export type KnowledgeImportStatus = 'READY' | 'EXECUTING' | 'COMPLETED' | 'FAILED';
+export type KnowledgeImportRowStatus = 'VALID' | 'INVALID' | 'IMPORTED' | 'FAILED';
+
+export interface KnowledgeImportSummary {
+  id: string;
+  projectId: string;
+  fileName: string;
+  strategy: KnowledgeImportStrategy;
+  status: KnowledgeImportStatus;
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  importedRows: number;
+  errorSummary: readonly string[];
+  createdAt: string;
+}
+
+export interface KnowledgeImportRow {
+  rowNumber: number;
+  question: string;
+  answer: string;
+  externalId: string | null;
+  active: boolean;
+  status: KnowledgeImportRowStatus;
+  errors: readonly string[];
+}
+
+export interface KnowledgeImportDetail extends KnowledgeImportSummary {
+  rows: KnowledgeImportRow[];
+  page: number;
+  size: number;
+  totalRowElements: number;
+}

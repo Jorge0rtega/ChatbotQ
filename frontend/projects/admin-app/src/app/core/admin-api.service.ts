@@ -7,6 +7,9 @@ import {
   CreateKnowledgeRequest,
   CreateUserRequest,
   KnowledgeEntry,
+  KnowledgeImportDetail,
+  KnowledgeImportStrategy,
+  KnowledgeImportSummary,
   PageResponse,
   Project,
   ProjectIdsResponse,
@@ -127,6 +130,46 @@ export class AdminApiService {
     return this.http.post<KnowledgeEntry>(
       `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/${encodeURIComponent(entryId)}/embedding-retry`,
       { version },
+    );
+  }
+
+  createKnowledgeImport(
+    projectId: string,
+    file: File,
+    strategy: KnowledgeImportStrategy,
+  ): Observable<KnowledgeImportSummary> {
+    const body = new FormData();
+    body.append('file', file, file.name);
+    return this.http.post<KnowledgeImportSummary>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/imports`,
+      body,
+      { params: new HttpParams().set('strategy', strategy) },
+    );
+  }
+
+  getKnowledgeImport(
+    projectId: string,
+    jobId: string,
+    page = 0,
+    size = 20,
+  ): Observable<KnowledgeImportDetail> {
+    return this.http.get<KnowledgeImportDetail>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/imports/${encodeURIComponent(jobId)}`,
+      { params: this.pageParams(page, size) },
+    );
+  }
+
+  executeKnowledgeImport(projectId: string, jobId: string): Observable<KnowledgeImportSummary> {
+    return this.http.post<KnowledgeImportSummary>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/imports/${encodeURIComponent(jobId)}/execute`,
+      {},
+    );
+  }
+
+  retryKnowledgeImport(projectId: string, jobId: string): Observable<KnowledgeImportSummary> {
+    return this.http.post<KnowledgeImportSummary>(
+      `/api/admin/projects/${encodeURIComponent(projectId)}/knowledge/imports/${encodeURIComponent(jobId)}/retry`,
+      {},
     );
   }
 

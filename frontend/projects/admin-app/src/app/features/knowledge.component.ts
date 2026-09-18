@@ -16,6 +16,8 @@ import {
   CreateKnowledgeRequest,
   KnowledgeEmbeddingStatus,
   KnowledgeEntry,
+  KnowledgeImportDetail,
+  KnowledgeImportStrategy,
   PageResponse,
   Project,
 } from '../core/models';
@@ -25,7 +27,7 @@ import { SessionService } from '../core/session.service';
   standalone: true,
   imports: [ReactiveFormsModule],
   template: `
-    <section class="page">
+    <section class="page" [attr.inert]="pendingImportAction() ? '' : null">
       <header class="page-header">
         <div>
           <p class="eyebrow">Base de conocimiento</p>
@@ -36,10 +38,15 @@ import { SessionService } from '../core/session.service';
           <button #createTrigger class="primary" type="button" (click)="openCreate(createTrigger)">
             Nueva entrada
           </button>
+          <button #importTrigger class="ghost" type="button" (click)="openImport(importTrigger)">
+            Importar CSV
+          </button>
         }
       </header>
       <p class="success" aria-live="polite">{{ feedback() }}</p>
-      <p class="alert">{{ mutationError() }}</p>
+      @if (mutationError()) {
+        <p class="alert" role="alert" aria-live="assertive">{{ mutationError() }}</p>
+      }
 
       @if (projectsLoading()) {
         <p class="state" aria-live="polite">Cargando proyectos…</p>
@@ -148,6 +155,84 @@ import { SessionService } from '../core/session.service';
         }
       }
 
+      @if (importOpen()) {
+        <section class="panel" aria-labelledby="knowledge-import-heading">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Importación CSV</p>
+              <h2 #importHeading id="knowledge-import-heading" tabindex="-1">Importar conocimiento</h2>
+            </div>
+            <button class="ghost" type="button" (click)="closeImport()">Cerrar importación</button>
+          </header>
+          <div class="form-grid">
+            <label for="knowledge-import-file">Archivo CSV</label>
+            <input
+              #importFileInput
+              id="knowledge-import-file"
+              type="file"
+              accept=".csv,text/csv"
+              (change)="selectImportFile($any($event.target).files?.[0] ?? null)"
+            />
+            <label for="knowledge-import-strategy">Estrategia</label>
+            <select
+              id="knowledge-import-strategy"
+              [value]="importStrategy()"
+              (change)="importStrategy.set($any($event.target).value)"
+            >
+              <option value="CREATE_ONLY">Solo crear (CREATE_ONLY)</option>
+              <option value="UPSERT">Crear o actualizar (UPSERT)</option>
+            </select>
+            <p class="hint">{{ importFile()?.name || 'Selecciona un archivo CSV.' }}</p>
+            <div class="actions">
+              <button class="primary" type="button" [disabled]="!importFile() || importBusy()" (click)="uploadImport()">
+                {{ importBusy() ? 'Procesando…' : 'Cargar y validar' }}
+              </button>
+            </div>
+          </div>
+
+          @if (importBusy()) {
+            <p class="state" aria-live="polite">Cargando importación…</p>
+          }
+
+          @if (importDetail()) {
+            <section aria-labelledby="knowledge-import-results-heading">
+              <h3 id="knowledge-import-results-heading">Resultado de importación</h3>
+              <p>
+                {{ importDetail()!.fileName }} — {{ importDetail()!.validRows }} válidas,
+                {{ importDetail()!.invalidRows }} inválidas, {{ importDetail()!.importedRows }} importadas.
+              </p>
+              @if (importDetail()!.errorSummary.length) {
+                <ul>@for (error of importDetail()!.errorSummary; track error) { <li>{{ error }}</li> }</ul>
+              }
+              <div class="actions">
+                @if (canExecuteImport()) {
+                  <button #executeImportAction class="primary" type="button" [disabled]="importBusy()" (click)="askImportAction('execute')">Ejecutar importación</button>
+                }
+                @if (canRetryImport()) {
+                  <button #retryImportAction class="ghost" type="button" [disabled]="importBusy()" (click)="askImportAction('retry')">Reintentar importación</button>
+                }
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Filas de la importación</caption>
+                  <thead><tr><th>Fila</th><th>Pregunta</th><th>Estado</th><th>Errores</th></tr></thead>
+                  <tbody>
+                    @for (row of importDetail()!.rows; track row.rowNumber) {
+                      <tr><td>{{ row.rowNumber }}</td><td>{{ row.question }}</td><td>{{ row.status }}</td><td>{{ row.errors.join(', ') || '—' }}</td></tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              <nav class="pagination" aria-label="Paginación de filas de importación">
+                <button class="ghost" type="button" [disabled]="importDetail()!.page === 0 || importBusy()" (click)="loadImportDetail(importDetail()!.page - 1)">Anterior</button>
+                <span>Página {{ importDetail()!.page + 1 }} de {{ importTotalPages() }}</span>
+                <button class="ghost" type="button" [disabled]="importDetail()!.page + 1 >= importTotalPages() || importBusy()" (click)="loadImportDetail(importDetail()!.page + 1)">Siguiente</button>
+              </nav>
+            </section>
+          }
+        </section>
+      }
+
       @if (editorMode()) {
         <section class="panel" aria-labelledby="knowledge-editor-heading">
           <header class="page-header">
@@ -236,6 +321,22 @@ import { SessionService } from '../core/session.service';
         </section>
       }
     </section>
+    @if (pendingImportAction()) {
+      <section
+        class="panel"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="knowledge-import-confirm-heading"
+        (keydown)="trapImportConfirmationFocus($event)"
+      >
+        <h3 id="knowledge-import-confirm-heading">Confirmar acción</h3>
+        <p>{{ pendingImportAction() === 'execute' ? '¿Ejecutar esta importación?' : '¿Reintentar esta importación fallida?' }}</p>
+        <div class="actions">
+          <button #importConfirmButton class="primary" type="button" (click)="confirmImportAction()">Confirmar</button>
+          <button #importCancelButton class="ghost" type="button" (click)="cancelImportAction()">Cancelar</button>
+        </div>
+      </section>
+    }
   `,
 })
 export class KnowledgeComponent {
@@ -244,13 +345,23 @@ export class KnowledgeComponent {
   private readonly requestsCancelled = new Subject<void>();
   private readonly projectsRequestsCancelled = new Subject<void>();
   private readonly editorRequestsCancelled = new Subject<void>();
+  private readonly importRequestsCancelled = new Subject<void>();
   private requestEpoch = 0;
   private projectsRequestEpoch = 0;
   private editorRequestEpoch = 0;
+  private importRequestEpoch = 0;
   private loadedForUserId: string | null = null;
   private editorOrigin: HTMLElement | null = null;
+  private importOrigin: HTMLElement | null = null;
+  private importActionOrigin: HTMLElement | null = null;
   @ViewChild('questionInput') private questionInput?: ElementRef<HTMLInputElement>;
   @ViewChild('editorHeading') private editorHeading?: ElementRef<HTMLHeadingElement>;
+  @ViewChild('importHeading') private importHeading?: ElementRef<HTMLHeadingElement>;
+  @ViewChild('importConfirmButton') private importConfirmButton?: ElementRef<HTMLButtonElement>;
+  @ViewChild('importCancelButton') private importCancelButton?: ElementRef<HTMLButtonElement>;
+  @ViewChild('executeImportAction') private executeImportAction?: ElementRef<HTMLButtonElement>;
+  @ViewChild('retryImportAction') private retryImportAction?: ElementRef<HTMLButtonElement>;
+  @ViewChild('importFileInput') private importFileInput?: ElementRef<HTMLInputElement>;
   readonly session = inject(SessionService);
   readonly projects = signal<readonly Project[]>([]);
   readonly selectedProjectId = signal('');
@@ -267,6 +378,12 @@ export class KnowledgeComponent {
   readonly editorLoading = signal(false);
   readonly editorSaving = signal(false);
   readonly editorError = signal('');
+  readonly importOpen = signal(false);
+  readonly importFile = signal<File | null>(null);
+  readonly importStrategy = signal<KnowledgeImportStrategy>('CREATE_ONLY');
+  readonly importDetail = signal<KnowledgeImportDetail | null>(null);
+  readonly importBusy = signal(false);
+  readonly pendingImportAction = signal<'execute' | 'retry' | null>(null);
   readonly editorForm = new FormGroup({
     question: new FormControl('', { nonNullable: true, validators: [Validators.required] }),
     answer: new FormControl('', { nonNullable: true, validators: [Validators.required] }),
@@ -275,6 +392,7 @@ export class KnowledgeComponent {
   });
 
   constructor() {
+    this.destroyRef.onDestroy(() => this.clearImportState(false));
     effect(() => {
       const me = this.session.me();
       if (me && this.loadedForUserId !== me.userId) {
@@ -291,6 +409,7 @@ export class KnowledgeComponent {
     )
       return;
     this.closeEditor(false);
+    this.closeImport(false);
     this.selectedProjectId.set(projectId);
     this.load(0);
   }
@@ -334,6 +453,202 @@ export class KnowledgeComponent {
           }
         },
       });
+  }
+
+  openImport(origin: HTMLElement): void {
+    if (!this.selectedProjectId()) return;
+    this.clearImportState(false);
+    this.importOrigin = origin;
+    this.feedback.set('');
+    this.mutationError.set('');
+    this.importOpen.set(true);
+    queueMicrotask(() => this.importHeading?.nativeElement.focus());
+  }
+
+  selectImportFile(file: File | null): void {
+    this.cancelImportRequests();
+    this.importFile.set(file);
+    this.importDetail.set(null);
+    this.pendingImportAction.set(null);
+    this.mutationError.set('');
+  }
+
+  uploadImport(): void {
+    const projectId = this.selectedProjectId();
+    const file = this.importFile();
+    if (!projectId || !file || this.importBusy()) return;
+    this.cancelImportRequests();
+    const requestEpoch = ++this.importRequestEpoch;
+    this.importBusy.set(true);
+    this.feedback.set('');
+    this.mutationError.set('');
+    this.importDetail.set(null);
+    this.api
+      .createKnowledgeImport(projectId, file, this.importStrategy())
+      .pipe(
+        takeUntil(this.importRequestsCancelled),
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          if (requestEpoch === this.importRequestEpoch) this.importBusy.set(false);
+        }),
+      )
+      .subscribe({
+        next: (summary) => {
+          if (requestEpoch !== this.importRequestEpoch) return;
+          this.importFile.set(null);
+          if (this.importFileInput) this.importFileInput.nativeElement.value = '';
+          this.feedback.set('Archivo cargado y validado correctamente.');
+          this.importBusy.set(false);
+          this.loadImportDetail(0, summary.id);
+        },
+        error: (error) => {
+          if (requestEpoch !== this.importRequestEpoch) return;
+          this.importFile.set(null);
+          if (this.importFileInput) this.importFileInput.nativeElement.value = '';
+          this.importDetail.set(null);
+          this.mutationError.set(httpErrorMessage(error));
+        },
+      });
+  }
+
+  loadImportDetail(page = 0, jobId = this.importDetail()?.id, preserveError = false): void {
+    const projectId = this.selectedProjectId();
+    if (!projectId || !jobId || this.importBusy()) return;
+    this.cancelImportRequests();
+    const requestEpoch = ++this.importRequestEpoch;
+    this.importBusy.set(true);
+    this.importDetail.set(null);
+    if (!preserveError) this.mutationError.set('');
+    this.api
+      .getKnowledgeImport(projectId, jobId, page, 20)
+      .pipe(
+        takeUntil(this.importRequestsCancelled),
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          if (requestEpoch === this.importRequestEpoch) this.importBusy.set(false);
+        }),
+      )
+      .subscribe({
+        next: (detail) => {
+          if (requestEpoch === this.importRequestEpoch) this.importDetail.set(detail);
+        },
+        error: (error) => {
+          if (requestEpoch === this.importRequestEpoch) {
+            this.importDetail.set(null);
+            this.mutationError.set(httpErrorMessage(error));
+          }
+        },
+      });
+  }
+
+  canExecuteImport(): boolean {
+    return this.importDetail()?.status === 'READY';
+  }
+
+  canRetryImport(): boolean {
+    const detail = this.importDetail();
+    return detail?.status === 'FAILED' && detail.invalidRows === 0;
+  }
+
+  importTotalPages(): number {
+    const detail = this.importDetail();
+    return detail ? Math.max(1, Math.ceil(detail.totalRowElements / 20)) : 1;
+  }
+
+  askImportAction(action: 'execute' | 'retry'): void {
+    if ((action === 'execute' && !this.canExecuteImport()) || (action === 'retry' && !this.canRetryImport())) return;
+    this.importActionOrigin = action === 'execute'
+      ? this.executeImportAction?.nativeElement ?? null
+      : this.retryImportAction?.nativeElement ?? null;
+    this.pendingImportAction.set(action);
+    queueMicrotask(() => this.importConfirmButton?.nativeElement.focus());
+  }
+
+  cancelImportAction(): void {
+    this.pendingImportAction.set(null);
+    const origin = this.importActionOrigin;
+    this.importActionOrigin = null;
+    queueMicrotask(() => { if (origin?.isConnected) origin.focus(); });
+  }
+
+  trapImportConfirmationFocus(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelImportAction();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    event.preventDefault();
+    (event.shiftKey ? this.importCancelButton : this.importConfirmButton)?.nativeElement.focus();
+  }
+
+  confirmImportAction(): void {
+    const projectId = this.selectedProjectId();
+    const detail = this.importDetail();
+    const action = this.pendingImportAction();
+    if (!projectId || !detail || !action || this.importBusy()) return;
+    if ((action === 'execute' && !this.canExecuteImport()) || (action === 'retry' && !this.canRetryImport())) {
+      this.pendingImportAction.set(null);
+      return;
+    }
+    this.cancelImportRequests();
+    const requestEpoch = ++this.importRequestEpoch;
+    this.importBusy.set(true);
+    this.pendingImportAction.set(null);
+    this.feedback.set('');
+    this.mutationError.set('');
+    const source = action === 'execute'
+      ? this.api.executeKnowledgeImport(projectId, detail.id)
+      : this.api.retryKnowledgeImport(projectId, detail.id);
+    source
+      .pipe(
+        takeUntil(this.importRequestsCancelled),
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          if (requestEpoch === this.importRequestEpoch) this.importBusy.set(false);
+        }),
+      )
+      .subscribe({
+        next: () => {
+          if (requestEpoch !== this.importRequestEpoch) return;
+          this.feedback.set(action === 'execute' ? 'Importación enviada a ejecución.' : 'Importación reenviada. Ejecútala cuando esté lista.');
+          this.importBusy.set(false);
+          this.loadImportDetail(detail.page, detail.id);
+        },
+        error: (error) => {
+          if (requestEpoch !== this.importRequestEpoch) return;
+          this.importDetail.set(null);
+          const conflict = error?.status === 409;
+          this.mutationError.set(conflict ? 'La importación cambió en otra sesión. Se recargará el detalle.' : httpErrorMessage(error));
+          if (conflict) {
+            this.importBusy.set(false);
+            this.loadImportDetail(detail.page, detail.id, true);
+          }
+        },
+      });
+  }
+
+  closeImport(restoreFocus = true): void {
+    this.clearImportState(restoreFocus);
+  }
+
+  private clearImportState(restoreFocus: boolean): void {
+    this.cancelImportRequests();
+    this.importOpen.set(false);
+    this.importFile.set(null);
+    if (this.importFileInput) this.importFileInput.nativeElement.value = '';
+    this.importDetail.set(null);
+    this.importBusy.set(false);
+    this.pendingImportAction.set(null);
+    this.importActionOrigin = null;
+    const origin = this.importOrigin;
+    this.importOrigin = null;
+    if (restoreFocus) queueMicrotask(() => { if (origin?.isConnected) origin.focus(); });
+  }
+
+  private cancelImportRequests(): void {
+    this.importRequestsCancelled.next();
+    ++this.importRequestEpoch;
   }
 
   openCreate(origin: HTMLElement): void {
@@ -516,7 +831,6 @@ export class KnowledgeComponent {
                 ? 'La entrada cambió en otra sesión. Vuelve a abrirla antes de guardar.'
                 : httpErrorMessage(error);
             this.editorError.set(message);
-            this.mutationError.set(message);
           }
         },
       });
@@ -533,6 +847,7 @@ export class KnowledgeComponent {
     this.requestsCancelled.next();
     ++this.requestEpoch;
     this.closeEditor(false);
+    this.closeImport(false);
     this.projects.set([]);
     this.selectedProjectId.set('');
     this.data.set(null);

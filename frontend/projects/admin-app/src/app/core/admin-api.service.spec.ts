@@ -101,6 +101,43 @@ describe('AdminApiService contracts', () => {
     expect(retry.request.body).toEqual({ version: 7 });
   });
 
+  it('uses exact multipart import, detail, execute, and retry contracts', () => {
+    const file = new File(['question,answer\nPregunta,Respuesta'], 'knowledge.csv', {
+      type: 'text/csv',
+    });
+    api.createKnowledgeImport('project id', file, 'UPSERT').subscribe();
+    const create = http.expectOne(
+      (request) =>
+        request.url === '/api/admin/projects/project%20id/knowledge/imports' &&
+        request.params.get('strategy') === 'UPSERT',
+    );
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toBeInstanceOf(FormData);
+    const uploaded = (create.request.body as FormData).get('file') as File;
+    expect(uploaded.name).toBe('knowledge.csv');
+    expect(uploaded.size).toBe(file.size);
+    expect(create.request.headers.has('Content-Type')).toBe(false);
+
+    api.getKnowledgeImport('project id', 'job id', 2, 20).subscribe();
+    const detail = http.expectOne(
+      (request) =>
+        request.url === '/api/admin/projects/project%20id/knowledge/imports/job%20id' &&
+        request.params.get('page') === '2' &&
+        request.params.get('size') === '20',
+    );
+    expect(detail.request.method).toBe('GET');
+
+    api.executeKnowledgeImport('project id', 'job id').subscribe();
+    const execute = http.expectOne('/api/admin/projects/project%20id/knowledge/imports/job%20id/execute');
+    expect(execute.request.method).toBe('POST');
+    expect(execute.request.body).toEqual({});
+
+    api.retryKnowledgeImport('project id', 'job id').subscribe();
+    const retry = http.expectOne('/api/admin/projects/project%20id/knowledge/imports/job%20id/retry');
+    expect(retry.request.method).toBe('POST');
+    expect(retry.request.body).toEqual({});
+  });
+
   it('uses exact user-project assignment URLs, verbs and body', () => {
     api.getUserProjectIds('u1').subscribe();
     const get = http.expectOne('/api/admin/users/u1/projects');
