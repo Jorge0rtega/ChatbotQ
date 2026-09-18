@@ -20,6 +20,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Instant;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -180,6 +182,74 @@ class JdbcKnowledgeImportExecutionAdapterTest {
             releaseClaim.countDown();
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void rollsBackClaimAndReclaimsAbandonedProcessingRowsWithoutResettingAttempts() {
+        assertThrows(IllegalStateException.class, () -> transactions.execute(status -> {
+            executions.claimReadyForExecution(general, project, job);
+            throw new IllegalStateException("rollback");
+        }));
+        assertEquals("READY", jdbc.queryForObject("select status from knowledge_import_job where id=?", String.class, job));
+        assertEquals(0, jdbc.queryForObject("select execution_attempt_count from knowledge_import_job where id=?", Integer.class, job).intValue());
+
+        ClaimedKnowledgeImportExecution first = executions.claimReadyForExecution(general, project, job);
+        jdbc.update("insert into knowledge_import_row(import_job_id,row_number,question,answer,active,status,attempt_count,errors) values (?,?,?,? ,true,'PROCESSING',1,'[]'::jsonb)", job, 1, "Q", "A");
+        jdbc.update("update knowledge_import_job set execution_lease_expires_at=clock_timestamp()-interval '1 second' where id=?", job);
+        ClaimedKnowledgeImportExecution reclaimed = executions.claimReadyForExecution(general, project, job);
+
+        assertNotEquals(first.getClaimToken(), reclaimed.getClaimToken());
+        assertEquals(1, jdbc.queryForObject("select count(*) from knowledge_import_row where import_job_id=? and status='VALID' and attempt_count=1", Integer.class, job).intValue());
+    }
+
+    @Test
+    void recoversStrandedRowAfterAttemptCapWhenFirstReclaimSkippedLockedAbandonedRow() throws Exception {
+        ClaimedKnowledgeImportExecution oldClaim = executions.claimReadyForExecution(general, project, job);
+        jdbc.update("insert into knowledge_import_row(import_job_id,row_number,question,answer,active,status,attempt_count,errors) values (?,?,?,? ,true,'PROCESSING',1,'[]'::jsonb)", job, 1, "Q", "A");
+        jdbc.update("update knowledge_import_job set execution_lease_expires_at=clock_timestamp()-interval '1 second',execution_attempt_count=4 where id=?", job);
+        CountDownLatch rowLocked = new CountDownLatch(1);
+        CountDownLatch releaseRowLock = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> lock = executor.submit(() -> holdRowLock(rowLocked, releaseRowLock));
+            assertTrue(rowLocked.await(5, TimeUnit.SECONDS), "abandoned row was not locked");
+
+            ClaimedKnowledgeImportExecution cappedReplacement = transactions.execute(status ->
+                executions.claimReadyForExecution(general, project, job));
+            assertEquals(5, jdbc.queryForObject("select execution_attempt_count from knowledge_import_job where id=?", Integer.class, job).intValue());
+            assertEquals("PROCESSING", jdbc.queryForObject("select status from knowledge_import_row where import_job_id=? and row_number=1", String.class, job));
+            jdbc.update("update knowledge_import_job set execution_lease_expires_at=clock_timestamp()-interval '1 second' where id=?", job);
+
+            releaseRowLock.countDown();
+            lock.get(5, TimeUnit.SECONDS);
+            ClaimedKnowledgeImportExecution recovery = transactions.execute(status ->
+                executions.claimReadyForExecution(general, project, job));
+
+            assertEquals(5, jdbc.queryForObject("select execution_attempt_count from knowledge_import_job where id=?", Integer.class, job).intValue());
+            assertTrue(new JdbcKnowledgeImportExecutionAdapter(jdbc).claimNextValidRow(recovery).isPresent());
+            assertTrue(!new JdbcKnowledgeImportExecutionAdapter(jdbc).claimNextValidRow(oldClaim).isPresent());
+            assertNotEquals(cappedReplacement.getClaimToken(), recovery.getClaimToken());
+        } finally {
+            releaseRowLock.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private void holdRowLock(CountDownLatch locked, CountDownLatch release) {
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(
+                "select row_number from knowledge_import_row where import_job_id=? and row_number=1 for update")) {
+                statement.setObject(1, job);
+                statement.executeQuery();
+                locked.countDown();
+                await(release);
+                connection.commit();
+            }
+        } catch (Exception failure) {
+            throw new AssertionError(failure);
         }
     }
 

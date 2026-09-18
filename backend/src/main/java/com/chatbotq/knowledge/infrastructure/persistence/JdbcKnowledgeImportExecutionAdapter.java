@@ -7,6 +7,7 @@ import com.chatbotq.knowledge.application.port.KnowledgeImportRowClaimPort;
 import com.chatbotq.knowledge.application.usecase.ForbiddenKnowledgeAdministrationException;
 import com.chatbotq.knowledge.application.usecase.ImportExecutionNotReadyException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeImportJobNotFoundException;
+import com.chatbotq.knowledge.application.usecase.KnowledgeImportRetryNotAllowedException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -87,17 +88,57 @@ public class JdbcKnowledgeImportExecutionAdapter implements KnowledgeImportExecu
             (rs, rowNum) -> rs.getString(1), jobId, projectId);
         if (statuses.isEmpty()) throw new KnowledgeImportJobNotFoundException();
         List<ClaimedKnowledgeImportExecution> claims = jdbc.query(
-            "update knowledge_import_job set status='PROCESSING',execution_claim_token=gen_random_uuid(),"
+            "with abandoned as materialized (select r.ctid from knowledge_import_row r join knowledge_import_job j on j.id=r.import_job_id "
+                + "where j.id=? and j.project_id=? and j.status='PROCESSING' and j.execution_lease_expires_at<=clock_timestamp() "
+                + "and r.status='PROCESSING' for update of r skip locked), "
+                + "reclaimed as (update knowledge_import_row r set status='VALID' from abandoned a where r.ctid=a.ctid returning r.ctid) "
+                + "update knowledge_import_job set status='PROCESSING',execution_claim_token=gen_random_uuid(),"
                 + "execution_lease_expires_at=clock_timestamp()+interval '5 minutes',"
-                + "execution_attempt_count=execution_attempt_count+1,last_execution_error_code=null "
-                + "where id=? and project_id=? and execution_attempt_count<5 and (status='READY' "
+                + "execution_attempt_count=case when execution_attempt_count<5 then execution_attempt_count+1 else execution_attempt_count end,last_execution_error_code=null "
+                + "where id=? and project_id=? and (execution_attempt_count<5 or exists(select 1 from reclaimed)) and (status='READY' "
                 + "or (status='PROCESSING' and execution_lease_expires_at<=clock_timestamp())) "
                 + "returning id,project_id,strategy,execution_claim_token",
             (rs, rowNum) -> new ClaimedKnowledgeImportExecution(rs.getObject("id", UUID.class),
                 rs.getObject("project_id", UUID.class), rs.getString("strategy"),
-                rs.getObject("execution_claim_token", UUID.class)), jobId, projectId);
+                rs.getObject("execution_claim_token", UUID.class)), jobId, projectId, jobId, projectId);
         if (claims.isEmpty()) throw new ImportExecutionNotReadyException();
         return claims.get(0);
+    }
+
+    @Override
+    @Transactional
+    public Finalization finalizeExecution(ClaimedKnowledgeImportExecution claim) {
+        if (claim == null) throw new IllegalArgumentException("claim must not be null");
+        List<Finalization> result = jdbc.query("with current_job as materialized (select id from knowledge_import_job where id=? and project_id=? "
+                + "and status='PROCESSING' and execution_claim_token=? and execution_lease_expires_at>clock_timestamp() for update), "
+                + "pending as materialized (select exists(select 1 from knowledge_import_row r join current_job j on j.id=r.import_job_id where r.status in ('VALID','PROCESSING')) value), "
+                + "failed_codes as materialized (select distinct code from knowledge_import_row r join current_job j on j.id=r.import_job_id "
+                + "cross join lateral jsonb_array_elements_text(coalesce(r.errors,'[]'::jsonb) || case when r.execution_error_code is null then '[]'::jsonb else jsonb_build_array(r.execution_error_code) end) code where r.status='FAILED'), "
+                + "finished as (update knowledge_import_job j set imported_rows=(select count(*) from knowledge_import_row r where r.import_job_id=j.id and r.status='IMPORTED'), "
+                + "status=case when exists(select 1 from knowledge_import_row r where r.import_job_id=j.id and r.status='FAILED') then 'FAILED' else 'COMPLETED' end, "
+                + "error_summary=case when exists(select 1 from knowledge_import_row r where r.import_job_id=j.id and r.status='FAILED') then coalesce((select jsonb_agg(code order by code) from failed_codes),'[]'::jsonb) else '[]'::jsonb end, "
+                + "last_execution_error_code=case when exists(select 1 from knowledge_import_row r where r.import_job_id=j.id and r.status='FAILED') then 'import_row_failed' else null end, "
+                + "execution_claim_token=null,execution_lease_expires_at=null,completed_at=clock_timestamp() from current_job c cross join pending p where j.id=c.id and not p.value returning j.id) "
+                + "select case when not exists(select 1 from current_job) then 'NOT_CURRENT' when exists(select 1 from finished) then 'FINALIZED' else 'NOT_DRAINED' end",
+            (rs, rowNum) -> Finalization.valueOf(rs.getString(1)), claim.getJobId(), claim.getProjectId(), claim.getClaimToken());
+        return result.get(0);
+    }
+
+    @Override
+    @Transactional
+    public void retryFailedExecution(UUID actorId, UUID projectId, UUID jobId) {
+        Actor actor = lockActor(actorId);
+        String projectStatus = lockProject(projectId, actor.generalAdmin);
+        authorize(actor, projectId, projectStatus);
+        List<String> statuses = jdbc.query("select status from knowledge_import_job where id=? and project_id=? for update",
+            (rs, rowNum) -> rs.getString(1), jobId, projectId);
+        if (statuses.isEmpty()) throw new KnowledgeImportJobNotFoundException();
+        Integer allowed = jdbc.queryForObject("select count(*) from knowledge_import_job j where j.id=? and j.project_id=? and j.status='FAILED' and j.invalid_rows=0 "
+            + "and exists(select 1 from knowledge_import_row r where r.import_job_id=j.id and r.status='FAILED')", Integer.class, jobId, projectId);
+        if (allowed == null || allowed != 1) throw new KnowledgeImportRetryNotAllowedException();
+        jdbc.update("update knowledge_import_row set status='VALID',knowledge_entry_id=null,execution_error_code=null where import_job_id=? and status='FAILED'", jobId);
+        jdbc.update("update knowledge_import_job set status='READY',imported_rows=(select count(*) from knowledge_import_row r where r.import_job_id=knowledge_import_job.id and r.status='IMPORTED'), "
+                + "error_summary='[]'::jsonb,last_execution_error_code=null,execution_claim_token=null,execution_lease_expires_at=null,completed_at=null where id=? and project_id=?", jobId, projectId);
     }
 
     private Actor lockActor(UUID actorId) {

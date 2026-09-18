@@ -8,6 +8,7 @@ import com.chatbotq.knowledge.application.model.PersistedKnowledgeImportJob;
 import com.chatbotq.knowledge.application.model.PersistedKnowledgeImportRow;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeImportsUseCase;
+import com.chatbotq.knowledge.application.usecase.ExecuteKnowledgeImportUseCase;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.http.ResponseEntity;
@@ -35,10 +36,13 @@ import java.util.ArrayList;
 public final class AdminKnowledgeController {
     private final AdministerKnowledgeUseCase knowledge;
     private final AdministerKnowledgeImportsUseCase imports;
+    private final ExecuteKnowledgeImportUseCase executions;
 
-    public AdminKnowledgeController(AdministerKnowledgeUseCase knowledge, AdministerKnowledgeImportsUseCase imports) {
+    public AdminKnowledgeController(AdministerKnowledgeUseCase knowledge, AdministerKnowledgeImportsUseCase imports,
+                                   ExecuteKnowledgeImportUseCase executions) {
         this.knowledge = knowledge;
         this.imports = imports;
+        this.executions = executions;
     }
 
     @PostMapping
@@ -97,6 +101,20 @@ public final class AdminKnowledgeController {
                                             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         PersistedKnowledgeImportJob job = imports.get(actor(authentication), canonicalProjectId(projectId), canonicalUuid(jobId, "jobId"), page, size);
         return KnowledgeImportDetailResponse.from(job, page, size);
+    }
+
+    @PostMapping("/imports/{jobId}/execute")
+    KnowledgeImportSummaryResponse executeImport(Authentication authentication, @PathVariable String projectId, @PathVariable String jobId) {
+        UUID actor = actor(authentication); UUID project = canonicalProjectId(projectId); UUID job = canonicalUuid(jobId, "jobId");
+        executions.execute(actor, project, job);
+        return KnowledgeImportSummaryResponse.from(imports.get(actor, project, job, 0, 1));
+    }
+
+    @PostMapping("/imports/{jobId}/retry")
+    KnowledgeImportSummaryResponse retryImport(Authentication authentication, @PathVariable String projectId, @PathVariable String jobId) {
+        UUID actor = actor(authentication); UUID project = canonicalProjectId(projectId); UUID job = canonicalUuid(jobId, "jobId");
+        executions.retry(actor, project, job);
+        return KnowledgeImportSummaryResponse.from(imports.get(actor, project, job, 0, 1));
     }
 
     private static UUID canonicalProjectId(String raw) {

@@ -5,6 +5,8 @@ import com.chatbotq.knowledge.application.usecase.KnowledgeEntryNotFoundExceptio
 import com.chatbotq.knowledge.application.usecase.KnowledgeImportJobNotFoundException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeVersionConflictException;
 import com.chatbotq.knowledge.application.usecase.KnowledgeRetryNotAllowedException;
+import com.chatbotq.knowledge.application.usecase.KnowledgeImportRetryNotAllowedException;
+import com.chatbotq.knowledge.application.usecase.ImportExecutionNotReadyException;
 import com.chatbotq.projects.application.usecase.ProjectNotFoundException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpHeaders;
@@ -40,6 +42,12 @@ public final class AdminKnowledgeExceptionHandler {
 
     @ExceptionHandler(KnowledgeRetryNotAllowedException.class)
     ResponseEntity<Map<String, String>> retryNotAllowed() { return error(HttpStatus.CONFLICT, "knowledge_retry_not_allowed"); }
+
+ @ExceptionHandler(KnowledgeImportRetryNotAllowedException.class)
+ ResponseEntity<Map<String, String>> importRetryNotAllowed() { return error(HttpStatus.CONFLICT, "knowledge_import_retry_not_allowed"); }
+
+ @ExceptionHandler(ImportExecutionNotReadyException.class)
+ ResponseEntity<Map<String, String>> importExecutionNotReady() { return error(HttpStatus.CONFLICT, "import_execution_not_ready"); }
 
     @ExceptionHandler(DuplicateKeyException.class)
     ResponseEntity<Map<String, String>> duplicateExternalId(DuplicateKeyException duplicate) {

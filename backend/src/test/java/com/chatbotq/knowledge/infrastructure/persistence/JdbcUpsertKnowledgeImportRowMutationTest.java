@@ -345,7 +345,8 @@ class JdbcUpsertKnowledgeImportRowMutationTest {
             ClaimedKnowledgeImportExecution replacement = transactions.execute(status ->
                 executions.claimReadyForExecution(actor, project, job));
             assertEquals(ProcessOneUpsertKnowledgeImportRowUseCase.Result.IMPORTED,
-                useCase(UUID.randomUUID()).process(replacement, row()));
+                useCase(UUID.randomUUID()).process(replacement, transactions.execute(status ->
+                    new JdbcKnowledgeImportExecutionAdapter(jdbc).claimNextValidRow(replacement).get())));
             assertEquals("IMPORTED", rowStatus());
             assertEquals(existing, rowEntryId());
             assertEquals("Question", jdbc.queryForObject("select question from knowledge_entry where id=?", String.class, existing));
@@ -400,7 +401,8 @@ class JdbcUpsertKnowledgeImportRowMutationTest {
             ClaimedKnowledgeImportExecution replacement = transactions.execute(status ->
                 executions.claimReadyForExecution(actor, project, job));
             assertEquals(ProcessOneUpsertKnowledgeImportRowUseCase.Result.IMPORTED,
-                useCase(UUID.randomUUID()).process(replacement, row()));
+                useCase(UUID.randomUUID()).process(replacement, transactions.execute(status ->
+                    new JdbcKnowledgeImportExecutionAdapter(jdbc).claimNextValidRow(replacement).get())));
             assertEquals("IMPORTED", rowStatus());
             assertEquals(1, knowledgeCount());
         } finally {

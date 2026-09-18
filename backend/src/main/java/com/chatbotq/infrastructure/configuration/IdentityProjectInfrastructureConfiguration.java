@@ -37,6 +37,7 @@ import com.chatbotq.knowledge.application.port.KnowledgeImportRowMutationPort;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.application.usecase.CsvKnowledgePreviewUseCase;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeImportsUseCase;
+import com.chatbotq.knowledge.application.usecase.ExecuteKnowledgeImportUseCase;
 import com.chatbotq.knowledge.application.usecase.ProcessOneCreateOnlyKnowledgeImportRowUseCase;
 import com.chatbotq.knowledge.application.usecase.ProcessOneUpsertKnowledgeImportRowUseCase;
 import com.chatbotq.knowledge.infrastructure.csv.ApacheCommonsCsvKnowledgeParser;
@@ -61,6 +62,7 @@ import com.chatbotq.projects.infrastructure.persistence.JdbcProjectRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Clock;
@@ -141,6 +143,13 @@ public class IdentityProjectInfrastructureConfiguration {
                                                                          KnowledgeImportAdministrationPort jobs,
                                                                          Clock clock) {
         return new AdministerKnowledgeImportsUseCase(preview, jobs, clock);
+    }
+
+    @Bean
+    ExecuteKnowledgeImportUseCase executeKnowledgeImportUseCase(KnowledgeImportExecutionPort executions,
+        @Qualifier("knowledgeImportRowClaimPort") KnowledgeImportRowClaimPort rows, ProcessOneCreateOnlyKnowledgeImportRowUseCase createOnly,
+        ProcessOneUpsertKnowledgeImportRowUseCase upsert, ApplicationTransaction transactions) {
+        return new ExecuteKnowledgeImportUseCase(executions, rows, createOnly, upsert, transactions);
     }
 
     @Bean

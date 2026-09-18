@@ -319,7 +319,8 @@ class JdbcCreateOnlyKnowledgeImportRowMutationTest {
             ClaimedKnowledgeImportExecution replacement = transactions.execute(status ->
                 executions.claimReadyForExecution(actor, project, job));
             assertEquals(ProcessOneCreateOnlyKnowledgeImportRowUseCase.Result.IMPORTED,
-                useCase(UUID.randomUUID()).process(replacement, row()));
+                useCase(UUID.randomUUID()).process(replacement, transactions.execute(status ->
+                    new JdbcKnowledgeImportExecutionAdapter(jdbc).claimNextValidRow(replacement).get())));
             assertEquals("IMPORTED", rowStatus());
             assertEquals(1, knowledgeCount());
         } finally {
