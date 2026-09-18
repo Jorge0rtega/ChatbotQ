@@ -38,6 +38,7 @@ import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeUseCase;
 import com.chatbotq.knowledge.application.usecase.CsvKnowledgePreviewUseCase;
 import com.chatbotq.knowledge.application.usecase.AdministerKnowledgeImportsUseCase;
 import com.chatbotq.knowledge.application.usecase.ProcessOneCreateOnlyKnowledgeImportRowUseCase;
+import com.chatbotq.knowledge.application.usecase.ProcessOneUpsertKnowledgeImportRowUseCase;
 import com.chatbotq.knowledge.infrastructure.csv.ApacheCommonsCsvKnowledgeParser;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeAdministrationAdapter;
 import com.chatbotq.knowledge.infrastructure.persistence.JdbcKnowledgeEmbeddingProcessingAdapter;
@@ -147,6 +148,13 @@ public class IdentityProjectInfrastructureConfiguration {
         KnowledgeImportRowMutationPort mutations, KnowledgeEntryIdentityGenerator identities, Clock clock,
         @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
         return new ProcessOneCreateOnlyKnowledgeImportRowUseCase(mutations, identities, clock, maxInputTokensPerEntry);
+    }
+
+    @Bean
+    ProcessOneUpsertKnowledgeImportRowUseCase processOneUpsertKnowledgeImportRowUseCase(
+        KnowledgeImportRowMutationPort mutations, KnowledgeEntryIdentityGenerator identities, Clock clock,
+        @Value("${chatbotq.embedding.limits.max-input-tokens-per-entry:4000}") int maxInputTokensPerEntry) {
+        return new ProcessOneUpsertKnowledgeImportRowUseCase(mutations, identities, clock, maxInputTokensPerEntry);
     }
 
     @Bean

@@ -38,6 +38,23 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
             + "embedding_last_attempt_at,embedding_last_error_code,embedding_last_error_message,version,created_at,updated_at)";
     }
 
+    // The interactive update and an existing-entry UPSERT share this complete lifecycle assignment.
+    // Callers provide an entry locked with FOR UPDATE and supply the question placeholders in this order.
+    private static String canonicalEntryUpdateAssignment(String actorExpression, String nowExpression) {
+        return "question=?,answer=?,external_id=?,active=?,updated_by=" + actorExpression + ",updated_at=" + nowExpression
+            + ",version=u.version+1,embedding_input_token_upper_bound=case when u.question is distinct from ? then ? else u.embedding_input_token_upper_bound end"
+            + ",embedding_status=case when u.question is distinct from ? then 'PENDING' else u.embedding_status end"
+            + ",embedding_revision=case when u.question is distinct from ? then u.embedding_revision+1 else u.embedding_revision end"
+            + ",embedding=case when u.question is distinct from ? then null else u.embedding end"
+            + ",embedded_at=case when u.question is distinct from ? then null else u.embedded_at end"
+            + ",embedding_attempt_count=case when u.question is distinct from ? then 0 else u.embedding_attempt_count end"
+            + ",embedding_last_attempt_at=case when u.question is distinct from ? then null else u.embedding_last_attempt_at end"
+            + ",embedding_last_error_code=case when u.question is distinct from ? then null else u.embedding_last_error_code end"
+            + ",embedding_last_error_message=case when u.question is distinct from ? then null else u.embedding_last_error_message end"
+            + ",embedding_processing_claim_token=case when u.question is distinct from ? then null else u.embedding_processing_claim_token end"
+            + ",embedding_processing_lease_expires_at=case when u.question is distinct from ? then null else u.embedding_processing_lease_expires_at end";
+    }
+
     public JdbcKnowledgeAdministrationAdapter(JdbcTemplate jdbc) {
         this(jdbc, () -> { }, () -> { });
     }
@@ -109,6 +126,95 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
             }
         }
         throw new IllegalStateException("external-id conflict changed too often to terminalize import row");
+    }
+
+    @Override
+    @Transactional
+    public KnowledgeImportRowMutationPort.Result upsert(ClaimedKnowledgeImportExecution execution,
+                                                          ClaimedKnowledgeImportRow row, NewKnowledgeEntry entry) {
+        if (execution == null || row == null || entry == null) throw new IllegalArgumentException("import mutation fields must not be null");
+        if (!lockClaimedUpsertRow(execution, row)) return KnowledgeImportRowMutationPort.Result.STALE;
+        afterClaimedRowLocked.run();
+
+        // An INSERT ... DO NOTHING observes concurrent unique-index entries.  If it loses that race, the
+        // following statement locks the exact same-project entry before applying the canonical update.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            UUID inserted = insertUpsertIfFenceIsCurrent(execution, entry);
+            if (inserted != null) {
+                afterEntryInserted.run();
+                if (!terminalizeUpsert(execution, row, inserted)) throw new StaleKnowledgeImportMutationException();
+                return KnowledgeImportRowMutationPort.Result.IMPORTED;
+            }
+            UUID existing = lockAndUpdateUpsertTargetIfFenceIsCurrent(execution, entry);
+            if (existing != null) {
+                afterEntryInserted.run();
+                if (!terminalizeUpsert(execution, row, existing)) throw new StaleKnowledgeImportMutationException();
+                return KnowledgeImportRowMutationPort.Result.IMPORTED;
+            }
+            if (!isCurrentUpsertClaim(execution)) return KnowledgeImportRowMutationPort.Result.STALE;
+        }
+        throw new IllegalStateException("external-id target changed too often to UPSERT import row");
+    }
+
+    private boolean lockClaimedUpsertRow(ClaimedKnowledgeImportExecution execution, ClaimedKnowledgeImportRow row) {
+        List<Integer> locked = jdbc.query("select r.row_number from knowledge_import_row r join knowledge_import_job j on j.id=r.import_job_id "
+                + "where j.id=? and j.project_id=? and j.strategy='UPSERT' and j.status='PROCESSING' "
+                + "and j.execution_claim_token=? and j.execution_lease_expires_at>clock_timestamp() "
+                + "and r.import_job_id=? and r.row_number=? and r.status='PROCESSING' for update of r",
+            (rs, rowNum) -> rs.getInt(1), execution.getJobId(), execution.getProjectId(), execution.getClaimToken(),
+            row.getJobId(), row.getRowNumber());
+        return !locked.isEmpty();
+    }
+
+    private UUID insertUpsertIfFenceIsCurrent(ClaimedKnowledgeImportExecution execution, NewKnowledgeEntry entry) {
+        List<UUID> inserted = jdbc.query("with current_job as materialized (select id,project_id,created_by from knowledge_import_job "
+                + "where id=? and project_id=? and strategy='UPSERT' and status='PROCESSING' and execution_claim_token=? "
+                + "and execution_lease_expires_at>clock_timestamp() and created_by is not null for no key update), "
+                + canonicalEntryInsertion("select ?,j.project_id,?,?,?,?,?,j.created_by,j.created_by,clock_timestamp(),clock_timestamp() "
+                    + "from current_job j", " on conflict (project_id,external_id) do nothing")
+                + " select id from inserted",
+            (rs, rowNum) -> rs.getObject("id", UUID.class), execution.getJobId(), execution.getProjectId(), execution.getClaimToken(),
+            entry.getId(), entry.getQuestion(), entry.getAnswer(), entry.getExternalId(), entry.isActive(),
+            entry.getEmbeddingInputTokenUpperBound());
+        return inserted.isEmpty() ? null : inserted.get(0);
+    }
+
+    private UUID lockAndUpdateUpsertTargetIfFenceIsCurrent(ClaimedKnowledgeImportExecution execution, NewKnowledgeEntry entry) {
+        List<UUID> targets = jdbc.query("with current_job as materialized (select id,project_id,created_by from knowledge_import_job "
+                + "where id=? and project_id=? and strategy='UPSERT' and status='PROCESSING' and execution_claim_token=? "
+                + "and execution_lease_expires_at>clock_timestamp() and created_by is not null for no key update), "
+                + "entry as materialized (select e.* from knowledge_entry e join current_job j on j.project_id=e.project_id "
+                + "where e.external_id=? for update), "
+                + "updated as (update knowledge_entry u set " + canonicalEntryUpdateAssignment("j.created_by", "clock_timestamp()")
+                + " from entry e cross join current_job j where u.id=e.id and (u.question is distinct from ? or u.answer is distinct from ? "
+                + "or u.external_id is distinct from ? or u.active is distinct from ?) and (u.question is not distinct from ? "
+                + "or u.embedding_revision < 9223372036854775807) returning u.id), "
+                + "unchanged as (select e.id from entry e where e.question is not distinct from ? and e.answer is not distinct from ? "
+                + "and e.external_id is not distinct from ? and e.active is not distinct from ?), "
+                + "snapshot as (select id from updated union all select id from unchanged) select id from snapshot",
+            (rs, rowNum) -> rs.getObject("id", UUID.class), execution.getJobId(), execution.getProjectId(), execution.getClaimToken(),
+            entry.getExternalId(), entry.getQuestion(), entry.getAnswer(), entry.getExternalId(), entry.isActive(),
+            entry.getQuestion(), entry.getEmbeddingInputTokenUpperBound(), entry.getQuestion(), entry.getQuestion(), entry.getQuestion(),
+            entry.getQuestion(), entry.getQuestion(), entry.getQuestion(), entry.getQuestion(), entry.getQuestion(), entry.getQuestion(),
+            entry.getQuestion(), entry.getQuestion(), entry.getAnswer(), entry.getExternalId(), entry.isActive(), entry.getQuestion(),
+            entry.getQuestion(), entry.getAnswer(), entry.getExternalId(), entry.isActive());
+        return targets.isEmpty() ? null : targets.get(0);
+    }
+
+    private boolean isCurrentUpsertClaim(ClaimedKnowledgeImportExecution execution) {
+        Integer current = jdbc.queryForObject("select count(*) from knowledge_import_job where id=? and project_id=? "
+                + "and strategy='UPSERT' and status='PROCESSING' and execution_claim_token=? and created_by is not null "
+                + "and execution_lease_expires_at>clock_timestamp()", Integer.class,
+            execution.getJobId(), execution.getProjectId(), execution.getClaimToken());
+        return current != null && current == 1;
+    }
+
+    private boolean terminalizeUpsert(ClaimedKnowledgeImportExecution execution, ClaimedKnowledgeImportRow row, UUID entryId) {
+        return jdbc.update("update knowledge_import_row r set status='IMPORTED',knowledge_entry_id=?,execution_error_code=null "
+                + "from knowledge_import_job j where r.import_job_id=j.id and r.import_job_id=? and r.row_number=? "
+                + "and r.status='PROCESSING' and j.id=? and j.project_id=? and j.strategy='UPSERT' "
+                + "and j.status='PROCESSING' and j.execution_claim_token=? and j.execution_lease_expires_at>clock_timestamp()",
+            entryId, row.getJobId(), row.getRowNumber(), execution.getJobId(), execution.getProjectId(), execution.getClaimToken()) == 1;
     }
 
     private boolean lockClaimedRow(ClaimedKnowledgeImportExecution execution, ClaimedKnowledgeImportRow row) {
@@ -198,7 +304,7 @@ public class JdbcKnowledgeAdministrationAdapter implements KnowledgeAdministrati
                 + "target as materialized (select p.id,p.status from locked_target p), "
                 + "decision as materialized (select exists (select 1 from actor a where a.is_general_admin) general_admin,exists (select 1 from target) project_exists,exists (select 1 from actor a join target p on p.status='ACTIVE' where a.is_general_admin or exists (select 1 from user_project_role upr where upr.user_id=a.id and upr.project_id=p.id and upr.role='PROJECT_ADMIN')) authorized), "
                 + "entry as materialized (select e.* from knowledge_entry e join target t on t.id=e.project_id cross join decision d where e.id=? and d.authorized for update), "
-                + "updated as (update knowledge_entry u set question=?,answer=?,external_id=?,active=?,updated_by=?,updated_at=?,version=u.version+1,embedding_input_token_upper_bound=case when u.question is distinct from ? then ? else u.embedding_input_token_upper_bound end,embedding_status=case when u.question is distinct from ? then 'PENDING' else u.embedding_status end,embedding_revision=case when u.question is distinct from ? then u.embedding_revision+1 else u.embedding_revision end,embedding=case when u.question is distinct from ? then null else u.embedding end,embedded_at=case when u.question is distinct from ? then null else u.embedded_at end,embedding_attempt_count=case when u.question is distinct from ? then 0 else u.embedding_attempt_count end,embedding_last_attempt_at=case when u.question is distinct from ? then null else u.embedding_last_attempt_at end,embedding_last_error_code=case when u.question is distinct from ? then null else u.embedding_last_error_code end,embedding_last_error_message=case when u.question is distinct from ? then null else u.embedding_last_error_message end,embedding_processing_claim_token=case when u.question is distinct from ? then null else u.embedding_processing_claim_token end,embedding_processing_lease_expires_at=case when u.question is distinct from ? then null else u.embedding_processing_lease_expires_at end from entry e where u.id=e.id and u.version=? and (u.question is distinct from ? or u.answer is distinct from ? or u.external_id is distinct from ? or u.active is distinct from ?) and (u.question is not distinct from ? or u.embedding_revision < 9223372036854775807) returning u.*), "
+                + "updated as (update knowledge_entry u set " + canonicalEntryUpdateAssignment("?", "?") + " from entry e where u.id=e.id and u.version=? and (u.question is distinct from ? or u.answer is distinct from ? or u.external_id is distinct from ? or u.active is distinct from ?) and (u.question is not distinct from ? or u.embedding_revision < 9223372036854775807) returning u.*), "
                 + "snapshot as materialized (select * from updated union all select * from entry where not exists (select 1 from updated)) "
                 + "select d.general_admin,d.project_exists,d.authorized,exists(select 1 from entry) entry_exists,exists(select 1 from entry e where e.version<>?) version_conflict,exists(select 1 from entry e where e.version=? and e.question is distinct from ? and e.embedding_revision=9223372036854775807) revision_conflict,s.id,s.project_id,s.question,s.answer,s.external_id,s.active,s.embedding_status,s.embedding_revision,s.embedding_attempt_count,s.embedding_last_attempt_at,s.embedding_last_error_code,s.embedding_last_error_message,s.version,s.created_at,s.updated_at from decision d left join snapshot s on true",
             (rs, rowNum) -> mapUpdateOutcome(rs), actorId, projectId, entryId, question, answer, externalId, active,
